@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 from datetime import datetime, timezone
-from typing import Iterable
+from typing import Iterable, cast
 
 from office_cli.cli._errors import EXIT_USER_ERROR, OfficeError
 from office_cli.floors import FloorSvg
@@ -93,7 +93,9 @@ class SeatService:
             return a
         if self.directory.is_active(a.employee_email):
             return a
-        return dataclasses.replace(a, employee_email="", hidden=False)
+        # ``dataclasses.replace`` is typed to return ``DataclassInstance``;
+        # the runtime value is the same dataclass type, so cast is safe.
+        return cast(Assignment, dataclasses.replace(a, employee_email="", hidden=False))
 
     def history(self, seat_id: str) -> list[AuditEntry]:
         self._require_seat(seat_id)

@@ -35,6 +35,8 @@ import yaml
 
 from office_cli.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, OfficeError
 
+_SHAPE_HINT = "see docs/architecture.md for the expected shape"
+
 
 def resolve_data_dir(args: argparse.Namespace | None = None) -> Path:
     explicit = getattr(args, "data_dir", None) if args is not None else None
@@ -109,7 +111,7 @@ def resolve_storage(data_dir: Path) -> StorageConfig:
         raise OfficeError(
             code=EXIT_USER_ERROR,
             message="storage.sheets must be a mapping in offices.yaml",
-            remediation="see docs/architecture.md for the expected shape",
+            remediation=_SHAPE_HINT,
         )
     spreadsheet_id = (
         os.environ.get("OFFICE_SHEETS_ID") or _str_field(sheets_cfg, "spreadsheet_id") or ""
@@ -152,7 +154,7 @@ def _str_field(d: dict, key: str) -> str:
         raise OfficeError(
             code=EXIT_USER_ERROR,
             message=f"storage.{key} must be a scalar, got {type(value).__name__}",
-            remediation="see docs/architecture.md for the expected shape",
+            remediation=_SHAPE_HINT,
         )
     return str(value)
 
@@ -254,7 +256,7 @@ def resolve_directory(data_dir: Path) -> DirectoryConfig:
         raise OfficeError(
             code=EXIT_USER_ERROR,
             message="directory.bamboohr must be a mapping in offices.yaml",
-            remediation="see docs/architecture.md for the expected shape",
+            remediation=_SHAPE_HINT,
         )
     subdomain = (
         os.environ.get("BAMBOOHR_SUBDOMAIN") or _str_field(bamboo_cfg, "subdomain") or ""
