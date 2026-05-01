@@ -67,7 +67,20 @@ function pushUrl(office, floor, seat) {
   }
 }
 
+// Allow-list of server paths the frontend is permitted to fetch. Even
+// though every path constructor is already validated against
+// `state.knownFloorIds`, we re-check at the fetch boundary so a future
+// caller cannot accidentally pass a URL-derived value through.
+const SAFE_PATH_RE = /^\/(api\/(offices|floors\/[A-Za-z0-9._-]+)|svgs\/[A-Za-z0-9._-]+\.svg)$/;
+
+function assertSafePath(path) {
+  if (typeof path !== "string" || !SAFE_PATH_RE.test(path)) {
+    throw new Error(`refusing to fetch untrusted path: ${path}`);
+  }
+}
+
 async function fetchJSON(path) {
+  assertSafePath(path);
   const r = await fetch(path);
   if (!r.ok) {
     throw new Error(`${r.status} ${r.statusText} for ${path}`);
@@ -76,6 +89,7 @@ async function fetchJSON(path) {
 }
 
 async function fetchText(path) {
+  assertSafePath(path);
   const r = await fetch(path);
   if (!r.ok) {
     throw new Error(`${r.status} ${r.statusText} for ${path}`);
@@ -97,28 +111,42 @@ function searchableSeat(s) {
   };
 }
 
+function applyAttr(node, key, value) {
+  if (key === "dataset") {
+    for (const [dk, dv] of Object.entries(value)) {
+      node.dataset[dk] = dv;
+    }
+    return;
+  }
+  if (key === "className") {
+    node.className = value;
+    return;
+  }
+  if (key.startsWith("on") && typeof value === "function") {
+    node.addEventListener(key.slice(2), value);
+    return;
+  }
+  if (value !== false && value !== null && value !== undefined) {
+    node.setAttribute(key, value);
+  }
+}
+
+function appendChildOrText(node, child) {
+  if (child == null) return;
+  if (typeof child === "string") {
+    node.appendChild(document.createTextNode(child));
+  } else {
+    node.appendChild(child);
+  }
+}
+
 function el(tag, attrs, ...children) {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
-    if (k === "dataset") {
-      for (const [dk, dv] of Object.entries(v)) {
-        node.dataset[dk] = dv;
-      }
-    } else if (k === "className") {
-      node.className = v;
-    } else if (k.startsWith("on") && typeof v === "function") {
-      node.addEventListener(k.slice(2), v);
-    } else if (v !== false && v !== null && v !== undefined) {
-      node.setAttribute(k, v);
-    }
+    applyAttr(node, k, v);
   }
   for (const child of children) {
-    if (child == null) continue;
-    if (typeof child === "string") {
-      node.appendChild(document.createTextNode(child));
-    } else {
-      node.appendChild(child);
-    }
+    appendChildOrText(node, child);
   }
   return node;
 }
@@ -274,7 +302,7 @@ function sanitizeSvg(rootEl) {
 function inlineSvg(svgText) {
   const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
   const svg = doc.documentElement;
-  if (!svg || svg.nodeName.toLowerCase() !== "svg") {
+  if (svg?.nodeName.toLowerCase() !== "svg") {
     throw new Error("response is not a valid SVG document");
   }
   sanitizeSvg(svg);
