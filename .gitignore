@@ -223,5 +223,9 @@ __marimo__/
 # operator state.
 seats/assignments.csv
 seats/audit-log.csv
+
+# Google Sheets service-account key — never commit credentials.
+data/sheets-service-account.json
+data/*-service-account.json
 .claude/scheduled_tasks.lock
 .claude/settings.local.json

@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-05-01
+
+### Added
+
+- `CONTRIBUTING.md` — contributor guide (fork, dev loop, conventions, OSS scope).
+- `docs/features/` — per-feature deep-dive index plus pages for CLI, BambooHR,
+  Slack, web map, effective dates, roles, Sheets, DynamoDB, and bi-directional
+  sync.
+
 ## [0.8.0] - 2026-05-01
 
 ### Added
