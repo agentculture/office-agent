@@ -84,6 +84,61 @@ def test_unknown_store_type_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert "unknown storage type" in exc.value.message
 
 
+def test_non_string_type_coerced(tmp_path: Path) -> None:
+    """Copilot #1: yaml `type: 1` should not crash with AttributeError."""
+    _write(tmp_path, "storage:\n  type: 1\n")
+    with pytest.raises(OfficeError) as exc:
+        resolve_storage(tmp_path)
+    assert "unknown storage type" in exc.value.message
+
+
+def test_non_dict_sheets_block_rejected(tmp_path: Path) -> None:
+    """Copilot #2: yaml `sheets: somestring` should surface a clear error."""
+    _write(tmp_path, "storage:\n  type: sheets\n  sheets: nope\n")
+    with pytest.raises(OfficeError) as exc:
+        resolve_storage(tmp_path)
+    assert "must be a mapping" in exc.value.message
+
+
+def test_non_int_ttl_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Copilot #3: cache_ttl_seconds must coerce cleanly or raise OfficeError."""
+    sa = tmp_path / "sa.json"
+    sa.write_text("{}", encoding="utf-8")
+    _write(
+        tmp_path,
+        f"""
+storage:
+  type: sheets
+  sheets:
+    spreadsheet_id: X
+    service_account: {sa}
+    cache_ttl_seconds: not-a-number
+""".lstrip(),
+    )
+    with pytest.raises(OfficeError) as exc:
+        resolve_storage(tmp_path)
+    assert "must be an integer" in exc.value.message
+
+
+def test_negative_ttl_rejected(tmp_path: Path) -> None:
+    sa = tmp_path / "sa.json"
+    sa.write_text("{}", encoding="utf-8")
+    _write(
+        tmp_path,
+        f"""
+storage:
+  type: sheets
+  sheets:
+    spreadsheet_id: X
+    service_account: {sa}
+    cache_ttl_seconds: -1
+""".lstrip(),
+    )
+    with pytest.raises(OfficeError) as exc:
+        resolve_storage(tmp_path)
+    assert "non-negative" in exc.value.message
+
+
 def test_relative_service_account_resolves_to_data_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

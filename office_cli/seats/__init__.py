@@ -22,9 +22,9 @@ from office_cli._config import (
 )
 from office_cli.floors import FloorSvg, parse_svg
 from office_cli.offices import load_offices
-from office_cli.seats._audit import AuditEntry, AuditLog
+from office_cli.seats._audit import AuditLog, CsvAuditLog
 from office_cli.seats._csv_store import CsvStore
-from office_cli.seats._models import Assignment
+from office_cli.seats._models import Assignment, AuditEntry
 from office_cli.seats._service import SeatService
 from office_cli.seats._store import AssignmentStore
 
@@ -33,6 +33,7 @@ __all__ = [
     "AssignmentStore",
     "AuditEntry",
     "AuditLog",
+    "CsvAuditLog",
     "CsvStore",
     "SeatService",
     "build_service",
@@ -66,7 +67,7 @@ def _build_backends(data_dir: Path, cfg: StorageConfig):
     if cfg.type == "csv":
         return (
             CsvStore(assignments_csv(data_dir)),
-            AuditLog(audit_log_csv(data_dir)),
+            CsvAuditLog(audit_log_csv(data_dir)),
         )
     # Lazy import — gspread (and therefore the sheets shim) is optional.
     from office_cli.seats.sheets import GspreadClient, SheetsAuditLog, SheetsStore

@@ -26,6 +26,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `office_cli.seats.__init__` re-exports the Sheets backends behind a
   guarded import so the package still loads cleanly without `gspread`.
+- `office_cli.seats.AuditLog` is now a `Protocol` (mirroring the
+  `AssignmentStore` shape from Stage 1). The CSV concrete class is
+  `office_cli.seats.CsvAuditLog`. `AuditLog` is still re-exported, so
+  type-checked downstream callers see the Protocol; runtime callers
+  that constructed `AuditLog(path)` need to switch to `CsvAuditLog(path)`.
 
 ## [0.1.0] - 2026-05-01
 

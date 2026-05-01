@@ -78,7 +78,9 @@ def resolve_storage(data_dir: Path) -> StorageConfig:
     operators get a clear hint instead of an opaque gspread error.
     """
     yaml_cfg = _read_storage_block(data_dir)
-    store_type = (os.environ.get("OFFICE_STORE") or yaml_cfg.get("type") or "csv").strip().lower()
+    store_type = (
+        (os.environ.get("OFFICE_STORE") or _str_field(yaml_cfg, "type") or "csv").strip().lower()
+    )
 
     if store_type == "csv":
         return StorageConfig(type="csv")
@@ -90,11 +92,19 @@ def resolve_storage(data_dir: Path) -> StorageConfig:
             remediation="set storage.type to 'csv' or 'sheets' in offices.yaml or OFFICE_STORE",
         )
 
-    sheets_cfg = yaml_cfg.get("sheets") or {}
+    sheets_cfg = yaml_cfg.get("sheets")
+    if sheets_cfg is None:
+        sheets_cfg = {}
+    if not isinstance(sheets_cfg, dict):
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message="storage.sheets must be a mapping in offices.yaml",
+            remediation="see docs/architecture.md for the expected shape",
+        )
     spreadsheet_id = (
-        os.environ.get("OFFICE_SHEETS_ID") or sheets_cfg.get("spreadsheet_id") or ""
+        os.environ.get("OFFICE_SHEETS_ID") or _str_field(sheets_cfg, "spreadsheet_id") or ""
     ).strip()
-    sa_field = os.environ.get("OFFICE_SHEETS_SA") or sheets_cfg.get("service_account")
+    sa_field = os.environ.get("OFFICE_SHEETS_SA") or _str_field(sheets_cfg, "service_account")
     if not spreadsheet_id:
         raise OfficeError(
             code=EXIT_ENV_ERROR,
@@ -110,13 +120,56 @@ def resolve_storage(data_dir: Path) -> StorageConfig:
     sa_path = Path(sa_field).expanduser()
     if not sa_path.is_absolute():
         sa_path = (data_dir / sa_path).resolve()
-    ttl = int(sheets_cfg.get("cache_ttl_seconds", 300))
+    ttl = _int_field(sheets_cfg, "cache_ttl_seconds", 300)
     return StorageConfig(
         type="sheets",
         spreadsheet_id=spreadsheet_id,
         service_account=sa_path,
         cache_ttl_seconds=ttl,
     )
+
+
+def _str_field(d: dict, key: str) -> str:
+    """Read ``d[key]`` as a string. ``None`` → empty; non-string → coerced.
+
+    Returns "" for missing keys. Raises :class:`OfficeError` only if the
+    value is structurally wrong (a list/dict where a scalar is expected).
+    """
+    value = d.get(key)
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"storage.{key} must be a scalar, got {type(value).__name__}",
+            remediation="see docs/architecture.md for the expected shape",
+        )
+    return str(value)
+
+
+def _int_field(d: dict, key: str, default: int) -> int:
+    value = d.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"storage.{key} must be an integer, got {type(value).__name__}",
+            remediation=f"set storage.{key} to a non-negative integer (seconds)",
+        )
+    try:
+        ttl = int(value)
+    except ValueError as err:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"storage.{key} must be an integer; got {value!r}",
+            remediation=f"set storage.{key} to a non-negative integer (seconds)",
+        ) from err
+    if ttl < 0:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"storage.{key} must be non-negative; got {ttl}",
+            remediation=f"set storage.{key} to a non-negative integer (seconds)",
+        )
+    return ttl
 
 
 def _read_storage_block(data_dir: Path) -> dict:

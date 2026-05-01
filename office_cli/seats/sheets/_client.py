@@ -21,7 +21,14 @@ class SheetsClient(Protocol):
         """Return every cell value in ``worksheet`` as ``[[row], [row], ...]``."""
 
     def replace_rows(self, worksheet: str, rows: list[list[str]]) -> None:
-        """Atomically replace the contents of ``worksheet`` with ``rows``."""
+        """Replace the contents of ``worksheet`` with ``rows``.
+
+        The :class:`GspreadClient` adapter does this in two requests
+        (``clear`` + ``update``), so it is **not atomic** — a transport
+        failure between the two leaves the worksheet empty. Callers that
+        care should either retry on failure or build a higher-level
+        recovery (e.g. a backup tab).
+        """
 
     def append_rows(self, worksheet: str, rows: list[list[str]]) -> None:
         """Append ``rows`` to the bottom of ``worksheet``."""
