@@ -37,6 +37,8 @@ from office_cli.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, OfficeError
 
 _SHAPE_HINT = "see docs/architecture.md for the expected shape"
 _BAMBOOHR_TTL_MAX_SECONDS = 300
+_PREFIX_SHEETS = "storage.sheets"
+_PREFIX_BAMBOOHR = "directory.bamboohr"
 
 
 def resolve_data_dir(args: argparse.Namespace | None = None) -> Path:
@@ -118,11 +120,11 @@ def resolve_storage(data_dir: Path) -> StorageConfig:
         )
     spreadsheet_id = (
         os.environ.get("OFFICE_SHEETS_ID")
-        or _str_field(sheets_cfg, "spreadsheet_id", prefix="storage.sheets")
+        or _str_field(sheets_cfg, "spreadsheet_id", prefix=_PREFIX_SHEETS)
         or ""
     ).strip()
     sa_field = os.environ.get("OFFICE_SHEETS_SA") or _str_field(
-        sheets_cfg, "service_account", prefix="storage.sheets"
+        sheets_cfg, "service_account", prefix=_PREFIX_SHEETS
     )
     if not spreadsheet_id:
         raise OfficeError(
@@ -139,7 +141,7 @@ def resolve_storage(data_dir: Path) -> StorageConfig:
     sa_path = Path(sa_field).expanduser()
     if not sa_path.is_absolute():
         sa_path = (data_dir / sa_path).resolve()
-    ttl = _int_field(sheets_cfg, "cache_ttl_seconds", 300, prefix="storage.sheets")
+    ttl = _int_field(sheets_cfg, "cache_ttl_seconds", 300, prefix=_PREFIX_SHEETS)
     return StorageConfig(
         type="sheets",
         spreadsheet_id=spreadsheet_id,
@@ -274,7 +276,7 @@ def resolve_directory(data_dir: Path) -> DirectoryConfig:
         )
     subdomain = (
         os.environ.get("BAMBOOHR_SUBDOMAIN")
-        or _str_field(bamboo_cfg, "subdomain", prefix="directory.bamboohr")
+        or _str_field(bamboo_cfg, "subdomain", prefix=_PREFIX_BAMBOOHR)
         or ""
     ).strip()
     api_token = (os.environ.get("BAMBOOHR_API_TOKEN") or "").strip()
@@ -290,7 +292,7 @@ def resolve_directory(data_dir: Path) -> DirectoryConfig:
             message="directory.type=bamboohr requires an API token",
             remediation=("set BAMBOOHR_API_TOKEN (env-only — do not commit the token to YAML)"),
         )
-    ttl = _int_field(bamboo_cfg, "cache_ttl_seconds", 300, prefix="directory.bamboohr")
+    ttl = _int_field(bamboo_cfg, "cache_ttl_seconds", 300, prefix=_PREFIX_BAMBOOHR)
     if ttl > _BAMBOOHR_TTL_MAX_SECONDS:
         raise OfficeError(
             code=EXIT_USER_ERROR,
