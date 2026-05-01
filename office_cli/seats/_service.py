@@ -18,6 +18,7 @@ import dataclasses
 from datetime import datetime, timezone
 from typing import Iterable, cast
 
+from office_cli._dates import is_effective, today_iso_date, validate_window
 from office_cli.cli._errors import EXIT_USER_ERROR, OfficeError
 from office_cli.floors import FloorSvg
 from office_cli.offices import Office
@@ -56,30 +57,31 @@ class SeatService:
         cluster: str | None = None,
         only_vacant: bool = False,
         only_occupied: bool = False,
+        as_of: str | None = None,
     ) -> list[Assignment]:
         existing = {a.seat_id: a for a in self.store.list()}
         out: list[Assignment] = []
         for seat_id, floor_id in sorted(self._seat_to_floor.items()):
-            if floor and floor_id != floor:
+            if not _seat_matches_scope(seat_id, floor_id, floor, cluster):
                 continue
-            if cluster and seat_id.split("-")[1:2] != [cluster]:
-                continue
-            a = existing.get(
-                seat_id,
-                Assignment(seat_id=seat_id, floor=floor_id),
-            )
+            a = existing.get(seat_id, Assignment(seat_id=seat_id, floor=floor_id))
+            if as_of is not None and not is_effective(a, as_of):
+                a = Assignment(seat_id=seat_id, floor=floor_id)
             a = self._apply_autovacate(a)
-            if only_vacant and not a.is_vacant:
-                continue
-            if only_occupied and a.is_vacant:
+            if not _row_matches_occupancy(a, only_vacant, only_occupied):
                 continue
             out.append(a)
         return out
 
-    def whereis(self, email: str) -> Assignment | None:
+    def whereis(self, email: str, *, as_of: str | None = None) -> Assignment | None:
         if not self.directory.is_active(email):
             return None
-        return self.store.by_email(email)
+        a = self.store.by_email(email)
+        if a is None:
+            return None
+        if as_of is not None and not is_effective(a, as_of):
+            return None
+        return a
 
     def _apply_autovacate(self, a: Assignment) -> Assignment:
         """Return ``a`` with ``employee_email`` cleared if the employee is
@@ -110,6 +112,8 @@ class SeatService:
         *,
         note: str = "",
         hidden: bool = False,
+        effective_from: str | None = None,
+        effective_until: str | None = None,
     ) -> Assignment:
         floor_id = self._require_seat(seat_id)
         if not email:
@@ -137,6 +141,9 @@ class SeatService:
                 remediation=f"unassign first: office seats unassign {seat_id}",
             )
         now = self._clock()
+        eff_from = effective_from if effective_from is not None else today_iso_date(self._clock)
+        eff_until = effective_until or ""
+        validate_window(eff_from, eff_until)
         new = Assignment(
             seat_id=seat_id,
             floor=floor_id,
@@ -144,8 +151,8 @@ class SeatService:
             last_updated=now,
             hidden=hidden,
             notes=note or (current.notes if current else ""),
-            effective_from=now,
-            effective_until="",
+            effective_from=eff_from,
+            effective_until=eff_until,
         )
         self.store.upsert(new)
         self.audit.append(
@@ -227,7 +234,7 @@ class SeatService:
             last_updated=now,
             hidden=current.hidden,
             notes=note or current.notes,
-            effective_from=now,
+            effective_from=today_iso_date(self._clock),
         )
         self.store.upsert_many([vacated, moved])
         self.audit.append_many(
@@ -293,3 +300,26 @@ def _build_seat_index(
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _seat_matches_scope(
+    seat_id: str,
+    floor_id: str,
+    floor: str | None,
+    cluster: str | None,
+) -> bool:
+    """Return True iff the seat passes the ``--floor`` / ``--cluster`` filters."""
+    if floor and floor_id != floor:
+        return False
+    if cluster and seat_id.split("-")[1:2] != [cluster]:
+        return False
+    return True
+
+
+def _row_matches_occupancy(a: Assignment, only_vacant: bool, only_occupied: bool) -> bool:
+    """Return True iff the row passes the ``--vacant`` / ``--occupied`` filters."""
+    if only_vacant and not a.is_vacant:
+        return False
+    if only_occupied and a.is_vacant:
+        return False
+    return True

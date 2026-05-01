@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from office_cli._dates import parse_iso_date, today_iso_date
 from office_cli.cli._errors import EXIT_USER_ERROR, OfficeError
 from office_cli.offices import Floor, Office
 from office_cli.seats import Assignment, SeatService
@@ -23,7 +24,7 @@ _SHELL_PATH = Path(__file__).parent / "static" / "index.html"
 
 
 def register_routes(app: Any, service: SeatService) -> None:
-    from fastapi import HTTPException
+    from fastapi import HTTPException, Query
     from fastapi.responses import HTMLResponse, RedirectResponse
 
     from office_cli.server._app import static_dir
@@ -35,22 +36,15 @@ def register_routes(app: Any, service: SeatService) -> None:
         return {"offices": [_office_to_dict(office) for office in service.offices.values()]}
 
     @app.get("/api/floors/{floor_id}")
-    def get_floor(floor_id: str) -> dict:
-        floor, office_id = _resolve_floor(service, floor_id)
-        if floor is None:
-            raise HTTPException(
-                status_code=404,
-                detail={
-                    "error": f"unknown floor: {floor_id}",
-                    "remediation": "GET /api/offices to see available floor ids",
-                },
-            )
-        seats = [_redact(a) for a in service.list_seats(floor=floor_id)]
-        return {
-            "floor": _floor_to_dict(floor, office_id),
-            "svg_url": f"/svgs/{floor.svg.name}",
-            "seats": seats,
-        }
+    def get_floor(
+        floor_id: str,
+        as_of: str = "",
+        # Accept ``?asOf=`` (camelCase) as an alias so direct-API callers
+        # using the SPA URL convention work without translation. When both
+        # are passed, ``as_of`` wins.
+        as_of_camel: str = Query("", alias="asOf"),
+    ) -> dict:
+        return _build_floor_response(service, floor_id, as_of or as_of_camel, HTTPException)
 
     @app.get("/", response_class=RedirectResponse)
     def root() -> str:
@@ -106,6 +100,46 @@ def register_routes(app: Any, service: SeatService) -> None:
 
     # Stash so static_dir() callers (tests) can find it consistently.
     app.state.static_dir = static_dir()
+
+
+def _build_floor_response(
+    service: SeatService,
+    floor_id: str,
+    raw_as_of: str,
+    http_exception: Any,
+) -> dict[str, Any]:
+    """Pure builder for the ``/api/floors/{id}`` JSON body.
+
+    Lifted out of the closure inside :func:`register_routes` so the
+    closure stays small (and the analyzer's cognitive-complexity ceiling
+    stays satisfied as more routes accumulate).
+    """
+    floor, office_id = _resolve_floor(service, floor_id)
+    if floor is None:
+        raise http_exception(
+            status_code=404,
+            detail={
+                "error": f"unknown floor: {floor_id}",
+                "remediation": "GET /api/offices to see available floor ids",
+            },
+        )
+    if raw_as_of:
+        as_of_value: str | None = parse_iso_date(
+            raw_as_of, field="as_of", example="?as_of=2026-07-01"
+        )
+        explicit = True
+    else:
+        as_of_value = today_iso_date(service._clock)
+        explicit = False
+    seats = [_redact(a) for a in service.list_seats(floor=floor_id, as_of=as_of_value)]
+    return {
+        "floor": _floor_to_dict(floor, office_id),
+        "svg_url": f"/svgs/{floor.svg.name}",
+        "seats": seats,
+        # Echo the date back only when the caller asked for one — this is
+        # what the frontend uses to decide whether to surface the banner.
+        "as_of": as_of_value if explicit else None,
+    }
 
 
 def _office_to_dict(office: Office) -> dict[str, Any]:

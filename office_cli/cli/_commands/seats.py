@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 
 from office_cli._config import add_data_dir_arg, resolve_data_dir
+from office_cli._dates import parse_iso_date, today_iso_date
 from office_cli.cli._errors import EXIT_USER_ERROR, OfficeError
 from office_cli.cli._output import emit_result
 from office_cli.seats import build_service
@@ -21,11 +22,17 @@ def cmd_list(args: argparse.Namespace) -> int:
             message="--vacant and --occupied are mutually exclusive",
             remediation="pass at most one of the two",
         )
+    as_of = (
+        parse_iso_date(args.as_of, field="--as-of", example="--as-of 2026-07-01")
+        if args.as_of
+        else today_iso_date()
+    )
     rows = service.list_seats(
         floor=args.floor,
         cluster=args.cluster,
         only_vacant=args.vacant,
         only_occupied=args.occupied,
+        as_of=as_of,
     )
     if args.json:
         emit_result({"seats": [a.to_dict() for a in rows]}, json_mode=True)
@@ -45,7 +52,24 @@ def cmd_list(args: argparse.Namespace) -> int:
 def cmd_assign(args: argparse.Namespace) -> int:
     data_dir = resolve_data_dir(args)
     service = build_service(data_dir)
-    a = service.assign(args.seat_id, args.email, note=args.note or "", hidden=args.hidden)
+    eff_from = (
+        parse_iso_date(args.from_date, field="--from", example="--from 2026-07-01")
+        if args.from_date
+        else None
+    )
+    eff_until = (
+        parse_iso_date(args.until_date, field="--until", example="--until 2026-12-31")
+        if args.until_date
+        else None
+    )
+    a = service.assign(
+        args.seat_id,
+        args.email,
+        note=args.note or "",
+        hidden=args.hidden,
+        effective_from=eff_from,
+        effective_until=eff_until,
+    )
     _emit_assignment(a, args.json, "assigned")
     return 0
 
@@ -108,6 +132,12 @@ def register(sub: argparse._SubParsersAction) -> None:
     p_list.add_argument("--cluster", help="Restrict to a single cluster letter.")
     p_list.add_argument("--vacant", action="store_true", help="Only vacant seats.")
     p_list.add_argument("--occupied", action="store_true", help="Only occupied seats.")
+    p_list.add_argument(
+        "--as-of",
+        dest="as_of",
+        metavar="YYYY-MM-DD",
+        help="Render the seat map as of this date (default: today).",
+    )
     p_list.add_argument("--json", action="store_true", help="Emit structured JSON.")
     add_data_dir_arg(p_list)
     p_list.set_defaults(func=cmd_list)
@@ -118,6 +148,18 @@ def register(sub: argparse._SubParsersAction) -> None:
     p_assign.add_argument("--note", help=_NOTE_HELP)
     p_assign.add_argument(
         "--hidden", action="store_true", help="Mark assignment as private (hidden=TRUE)."
+    )
+    p_assign.add_argument(
+        "--from",
+        dest="from_date",
+        metavar="YYYY-MM-DD",
+        help="Effective start date (inclusive); default: today.",
+    )
+    p_assign.add_argument(
+        "--until",
+        dest="until_date",
+        metavar="YYYY-MM-DD",
+        help="Effective end date (inclusive); default: open-ended.",
     )
     p_assign.add_argument("--json", action="store_true")
     add_data_dir_arg(p_assign)

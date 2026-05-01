@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from office_cli._dates import parse_iso_date, today_iso_date
+from office_cli.cli._errors import OfficeError
 from office_cli.seats import SeatService
 from office_cli.slack import _blocks
 from office_cli.slack._resolve import ParsedTarget, parse_target
@@ -58,10 +60,18 @@ def _resolve_and_lookup(
     if not target.ok:
         return _blocks.parse_failed(target.raw), "couldn't parse"
 
+    # Resolve the as-of date once — when the caller didn't pass a date,
+    # default to today (matches the CLI default; the trailing-token regex
+    # is permissive about month/day, so calendar-validate it explicitly).
+    try:
+        as_of = _resolve_as_of(service, target.as_of)
+    except OfficeError as err:
+        return _blocks.parse_failed(f"{target.as_of} — {err.message}"), "bad date"
+
     if target.email:
         email = target.email
         label = email
-        return _lookup(service, email, label)
+        return _lookup(service, email, label, as_of=as_of)
 
     user_id = target.user_id or command.get("user_id") or body.get("user_id", "")
     if not user_id:
@@ -73,7 +83,17 @@ def _resolve_and_lookup(
     # When the caller asked about themselves, label as "you"; otherwise
     # use the @-mention so Slack renders the name.
     label = "you" if target.self_lookup else f"<@{user_id}>"
-    return _lookup(service, email, label)
+    return _lookup(service, email, label, as_of=as_of)
+
+
+def _resolve_as_of(service: SeatService, raw: str) -> str:
+    """Calendar-validate ``raw`` if non-empty, else fall back to today.
+
+    Uses the service's clock so test injections continue to work.
+    """
+    if raw:
+        return parse_iso_date(raw, field="as-of date", example="2026-07-01")
+    return today_iso_date(service._clock)
 
 
 def _email_from_user_id(client: Any, user_id: str) -> tuple[str, str]:
@@ -90,11 +110,17 @@ def _email_from_user_id(client: Any, user_id: str) -> tuple[str, str]:
     return email, ""
 
 
-def _lookup(service: SeatService, email: str, label: str) -> tuple[list[dict[str, Any]], str]:
+def _lookup(
+    service: SeatService,
+    email: str,
+    label: str,
+    *,
+    as_of: str | None = None,
+) -> tuple[list[dict[str, Any]], str]:
     # Both blocks and the `text` fallback use ``label`` so we never leak
     # the resolved profile email through the screen-reader / older-client
     # rendering path — it would defeat the redaction the blocks rely on.
-    assignment = service.whereis(email)
+    assignment = service.whereis(email, as_of=as_of)
     if assignment is None:
         return _blocks.no_seat(label), f"no seat for {label}"
     if assignment.hidden:

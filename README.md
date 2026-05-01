@@ -6,12 +6,12 @@ BambooHR; assignments live in a Google Sheet (v1) or DynamoDB (v2). The
 CLI exposes the same operations as the Slack `/whereis` command and the
 web map.
 
-> **Status — v0.5.0.** Stages 1–5 of the v1 seating system are in:
+> **Status — v0.6.0.** Stages 1–6 of the v1 seating system are in:
 > floor SVG parser/validator, CSV / Google Sheets-backed assignment
 > store with append-only audit log, BambooHR-backed `EmployeeDirectory`
 > with the auto-vacate killer feature, CLI verbs (`floors`, `seats`,
-> `whereis`), a Slack `/whereis` slash-command listener, and a
-> search-first web map. Effective dates, SSO/roles, and DynamoDB
+> `whereis`), a Slack `/whereis` slash-command listener, a search-first
+> web map, and effective-date enforcement. SSO/roles and DynamoDB
 > land in later stages. See
 > [issue #1](https://github.com/agentculture/office-agent/issues/1).
 
@@ -133,11 +133,35 @@ Three invocation shapes:
 - `/whereis @user` — Slack mention; resolves the user's email.
 - `/whereis email@domain` — plain text fallback.
 
+A trailing `YYYY-MM-DD` token on any of the three shapes filters by
+effective date — e.g. `/whereis alice@x 2026-07-01` returns Alice's
+seat as of that date.
+
 Responses are **ephemeral by default** — only the caller sees them.
 `hidden=TRUE` seats render as "occupied (private)" until role gating
 (Stage 7) lifts the filter for privileged callers. Setting
 `OFFICE_WEB_BASE_URL` to your `office serve` deployment adds an
 "Open map" deep-link button to the response.
+
+### Effective-date windows
+
+Assignments can carry an effective window so the seat map renders "as
+of" any date:
+
+```bash
+office seats assign 5-T-01 alice@example.com --from 2026-07-01 --until 2026-12-31
+office whereis alice@example.com                     # default = today
+office whereis alice@example.com --as-of 2026-07-15  # inside the window
+office seats list --as-of 2026-09-01
+```
+
+The web map honors `?asOf=YYYY-MM-DD` in the URL —
+`http://localhost:8000/offices/tlv/floors/tlv-floor-5?asOf=2026-07-15`
+shows the same view, deep-linkable.
+
+`effective_from` / `effective_until` are stored as `YYYY-MM-DD` (date
+precision); `last_updated` and audit-log timestamps stay full ISO-8601.
+Empty bounds mean "always begins" / "no end".
 
 ## Adding a new floor
 
