@@ -90,19 +90,30 @@ class StorageConfig:
     region: str = ""
 
 
-def resolve_storage(data_dir: Path) -> StorageConfig:
+def resolve_storage(data_dir: Path, *, type_override: str | None = None) -> StorageConfig:
     """Pick the storage backend from offices.yaml + env overrides.
 
     Defaults to ``csv``. Sheets requires both a spreadsheet id and a
     service-account JSON path; we error early if either is missing so
     operators get a clear hint instead of an opaque gspread error.
+
+    ``type_override`` lets callers force a specific backend type
+    (csv / sheets / dynamo) without mutating the environment. The
+    migrate / sync verbs use this to construct source + target pairs.
     """
     yaml_cfg = _read_storage_block(data_dir)
-    store_type = (
-        (os.environ.get("OFFICE_STORE") or _str_field(yaml_cfg, "type", prefix="storage") or "csv")
-        .strip()
-        .lower()
-    )
+    if type_override is not None:
+        store_type = type_override.strip().lower()
+    else:
+        store_type = (
+            (
+                os.environ.get("OFFICE_STORE")
+                or _str_field(yaml_cfg, "type", prefix="storage")
+                or "csv"
+            )
+            .strip()
+            .lower()
+        )
 
     if store_type == "csv":
         return StorageConfig(type="csv")

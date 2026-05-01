@@ -84,16 +84,29 @@ class DynamoStore:
         self._cache_at = 0.0
 
 
+def _string(item: dict, key: str) -> str:
+    """Coerce a Dynamo attribute to ``str``, mapping ``None`` to empty.
+
+    DynamoDB can return ``None`` for NULL-typed values or partially-
+    migrated items. Without this normalization, ``str(None)`` would
+    produce the literal ``"None"`` and leak into CLI output.
+    """
+    value = item.get(key, "")
+    if value is None:
+        return ""
+    return str(value)
+
+
 def _item_to_assignment(item: dict) -> Assignment:
     return Assignment(
-        seat_id=str(item.get("seat_id", "")),
-        floor=str(item.get("floor", "")),
-        employee_email=str(item.get("employee_email", "")),
-        last_updated=str(item.get("last_updated", "")),
-        hidden=bool(item.get("hidden", False)),
-        notes=str(item.get("notes", "")),
-        effective_from=str(item.get("effective_from", "")),
-        effective_until=str(item.get("effective_until", "")),
+        seat_id=_string(item, "seat_id"),
+        floor=_string(item, "floor"),
+        employee_email=_string(item, "employee_email"),
+        last_updated=_string(item, "last_updated"),
+        hidden=bool(item.get("hidden") or False),
+        notes=_string(item, "notes"),
+        effective_from=_string(item, "effective_from"),
+        effective_until=_string(item, "effective_until"),
     )
 
 

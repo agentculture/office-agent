@@ -41,6 +41,7 @@ __all__ = [
     "DirectoryConfig",
     "SeatService",
     "StorageConfig",
+    "build_backends_for_type",
     "build_service",
 ]
 
@@ -124,23 +125,13 @@ def _build_backends(data_dir: Path, cfg: StorageConfig):
     )
 
 
-def build_backends_for_type(data_dir: Path, store_type: str):
+def build_backends_for_type(data_dir: Path, store_type: str) -> tuple[AssignmentStore, AuditLog]:
     """Resolve a ``StorageConfig`` for ``store_type`` and build (store, audit).
 
     Used by ``office seats migrate`` and ``office seats sync`` to spin up
-    a source / target pair driven by ``--from`` / ``--to`` flags. Reads
-    the same env / YAML config as :func:`build_service` would for that
-    type, with the type override applied last.
+    a source / target pair driven by ``--from`` / ``--to`` flags. Threads
+    the type override into :func:`resolve_storage` directly, so no
+    environment mutation is involved (safe for concurrent use).
     """
-    import os as _os  # local — avoid widening the module-level surface.
-
-    prior = _os.environ.get("OFFICE_STORE")
-    _os.environ["OFFICE_STORE"] = store_type
-    try:
-        cfg = resolve_storage(data_dir)
-    finally:
-        if prior is None:
-            _os.environ.pop("OFFICE_STORE", None)
-        else:
-            _os.environ["OFFICE_STORE"] = prior
+    cfg = resolve_storage(data_dir, type_override=store_type)
     return _build_backends(data_dir, cfg)

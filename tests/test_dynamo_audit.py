@@ -59,6 +59,38 @@ def test_for_seat_returns_chronological() -> None:
     assert all(r.seat_id == "5-T-01" for r in rows)
 
 
+def test_same_second_events_do_not_collide() -> None:
+    """Qodo Q2 / Copilot C1 — events at the same wall-clock second
+    must not overwrite each other.
+
+    SeatService writes timestamps at second precision; a rapid
+    assign → unassign within the same second must keep both rows.
+    The composite SK ``timestamp#action#employee_email`` ensures
+    DynamoDB's PK+SK dedup happens only on truly identical events.
+    """
+    _, log = _audit()
+    log.append_many(
+        [
+            AuditEntry(
+                timestamp="2026-05-01T00:00:01Z",
+                seat_id="5-T-01",
+                action="assign",
+                actor="cli",
+                employee_email="alice@example.com",
+            ),
+            AuditEntry(
+                timestamp="2026-05-01T00:00:01Z",
+                seat_id="5-T-01",
+                action="unassign",
+                actor="cli",
+                old_employee_email="alice@example.com",
+            ),
+        ]
+    )
+    rows = log.for_seat("5-T-01")
+    assert [r.action for r in rows] == ["assign", "unassign"]
+
+
 def test_idempotent_put_dedups() -> None:
     """Re-running the same batch doesn't duplicate rows — PK+SK key dedups."""
     _, log = _audit()

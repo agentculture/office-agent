@@ -44,7 +44,9 @@ def _data(data_dir: Path) -> list[str]:
 
 
 def test_csv_to_dynamo_round_trip(
-    dynamo_data_dir: Path, capsys: pytest.CaptureFixture[str]
+    dynamo_data_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Issue #12 acceptance — CSV → Dynamo migration preserves rows + audit."""
     # Seed the CSV side with two assignments.
@@ -59,18 +61,14 @@ def test_csv_to_dynamo_round_trip(
     summary = json.loads(capsys.readouterr().out)
     assert summary["assignments_written"] == 2
 
-    # Now read via dynamo and confirm parity.
-    import os
-
-    os.environ["OFFICE_STORE"] = "dynamo"
-    try:
-        rc = main(["seats", "list", "--json", "--occupied", *_data(dynamo_data_dir)])
-        assert rc == 0
-        body = json.loads(capsys.readouterr().out)
-        emails = sorted(s["employee_email"] for s in body["seats"])
-        assert emails == ["alice@example.com", "bob@example.com"]
-    finally:
-        os.environ.pop("OFFICE_STORE", None)
+    # Now read via dynamo and confirm parity. Use monkeypatch so a
+    # pre-existing OFFICE_STORE in the developer's shell is preserved.
+    monkeypatch.setenv("OFFICE_STORE", "dynamo")
+    rc = main(["seats", "list", "--json", "--occupied", *_data(dynamo_data_dir)])
+    assert rc == 0
+    body = json.loads(capsys.readouterr().out)
+    emails = sorted(s["employee_email"] for s in body["seats"])
+    assert emails == ["alice@example.com", "bob@example.com"]
 
 
 def test_dry_run_writes_nothing(dynamo_data_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -96,7 +94,11 @@ def test_dry_run_writes_nothing(dynamo_data_dir: Path, capsys: pytest.CaptureFix
     assert summary["assignments_new"] == 1
 
 
-def test_idempotent_rerun(dynamo_data_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_idempotent_rerun(
+    dynamo_data_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Re-running migrate is safe: assignments upsert, audit dedups (Dynamo PK+SK)."""
     main(["seats", "assign", "5-T-01", "alice@example.com", *_data(dynamo_data_dir)])
     capsys.readouterr()
@@ -105,17 +107,12 @@ def test_idempotent_rerun(dynamo_data_dir: Path, capsys: pytest.CaptureFixture[s
     main(["seats", "migrate", "--from", "csv", "--to", "dynamo", *_data(dynamo_data_dir)])
     capsys.readouterr()
 
-    import os
-
-    os.environ["OFFICE_STORE"] = "dynamo"
-    try:
-        rc = main(["seats", "history", "5-T-01", "--json", *_data(dynamo_data_dir)])
-        assert rc == 0
-        body = json.loads(capsys.readouterr().out)
-        # One assign action, deduped after the second migrate.
-        assert [e["action"] for e in body["history"]] == ["assign"]
-    finally:
-        os.environ.pop("OFFICE_STORE", None)
+    monkeypatch.setenv("OFFICE_STORE", "dynamo")
+    rc = main(["seats", "history", "5-T-01", "--json", *_data(dynamo_data_dir)])
+    assert rc == 0
+    body = json.loads(capsys.readouterr().out)
+    # One assign action, deduped after the second migrate.
+    assert [e["action"] for e in body["history"]] == ["assign"]
 
 
 def test_same_source_and_target_rejected(

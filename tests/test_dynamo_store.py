@@ -23,10 +23,12 @@ class FakeDynamoClient:
     def _key(self, table: str, item: dict) -> tuple[str, str]:
         # Always return a (pk, sk) pair. Assignments use SK="" since
         # they're keyed on seat_id alone; audit tables key on
-        # (seat_id, timestamp). Keeping the shape uniform avoids the
-        # variable-length tuple Sonar S8495 flags.
+        # (seat_id, event_id) where event_id is the composite SK that
+        # guarantees collision-free writes even for same-second events.
+        # Keeping the shape uniform avoids the variable-length tuple
+        # Sonar S8495 flags.
         is_audit = "audit" in table
-        sk = item.get("timestamp", "") if is_audit else ""
+        sk = item.get("event_id", "") if is_audit else ""
         return (item.get("seat_id", ""), sk)
 
     def scan_all(self, table: str) -> list[dict]:
