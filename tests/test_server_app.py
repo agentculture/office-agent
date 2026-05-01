@@ -55,7 +55,7 @@ def test_get_floor_returns_merged_view(data_dir: Path) -> None:
         body = r.json()
         assert body["floor"]["id"] == "tlv-floor-5"
         assert body["floor"]["office"] == "tlv"
-        assert body["svg_url"] == "/floors/tlv-floor-5.svg"
+        assert body["svg_url"] == "/svgs/tlv-floor-5.svg"
         seats = {seat["seat_id"]: seat for seat in body["seats"]}
         assert seats["5-T-01"]["employee_email"] == "alice@example.com"
         assert seats["5-T-01"]["hidden"] is False
@@ -140,12 +140,58 @@ def test_static_assets_served(data_dir: Path) -> None:
 
 def test_floor_svg_served_via_static_mount(data_dir: Path) -> None:
     with _client(data_dir) as c:
-        r = c.get("/floors/tlv-floor-5.svg")
+        r = c.get("/svgs/tlv-floor-5.svg")
         assert r.status_code == 200
         # Content-type may be image/svg+xml or application/xml depending on
         # platform; both are acceptable. Just check it's not html.
         assert "html" not in r.headers["content-type"]
         assert "<svg" in r.text
+
+
+def test_short_floor_url_redirects_to_canonical_spa(data_dir: Path) -> None:
+    """Slack's deep-link button (Stage 4) builds /floors/{id}?seat=X URLs.
+
+    The web server resolves them to /offices/{office}/floors/{id}?seat=X
+    so callers do not need to know the office id.
+    """
+    with _client(data_dir) as c:
+        r = c.get("/floors/tlv-floor-5?seat=5-T-01", follow_redirects=False)
+        assert r.status_code in (302, 307)
+        assert r.headers["location"] == "/offices/tlv/floors/tlv-floor-5?seat=5-T-01"
+
+        # Bare path, no query.
+        r2 = c.get("/floors/tlv-floor-5", follow_redirects=False)
+        assert r2.status_code in (302, 307)
+        assert r2.headers["location"] == "/offices/tlv/floors/tlv-floor-5"
+
+        # Unknown floor surfaces 404, not a redirect to a broken URL.
+        r3 = c.get("/floors/no-such-floor", follow_redirects=False)
+        assert r3.status_code == 404
+
+
+def test_hidden_seat_redacts_notes_when_vacant(data_dir: Path) -> None:
+    """Qodo Q4: a hidden=TRUE row with no email must still scrub notes."""
+    s = _service(data_dir)
+    # Manually craft a hidden-but-vacant row by writing through the store
+    # (`assign` requires an email, so we build the Assignment directly).
+    from office_cli.seats import Assignment
+
+    s.store.upsert(
+        Assignment(
+            seat_id="5-T-01",
+            floor="tlv-floor-5",
+            employee_email="",
+            hidden=True,
+            notes="reserved for visiting exec",
+        )
+    )
+    with TestClient(build_app(s, data_dir=data_dir)) as c:
+        body = c.get("/api/floors/tlv-floor-5").json()
+    seats = {x["seat_id"]: x for x in body["seats"]}
+    row = seats["5-T-01"]
+    assert row["hidden"] is True
+    assert row["employee_email"] is None
+    assert row["notes"] == ""
 
 
 def test_build_app_without_extra_raises(monkeypatch: pytest.MonkeyPatch, data_dir: Path) -> None:

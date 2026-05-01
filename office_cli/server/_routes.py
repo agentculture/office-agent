@@ -11,6 +11,7 @@ is treated as a ``viewer``.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from office_cli.cli._errors import EXIT_USER_ERROR, OfficeError
@@ -18,6 +19,7 @@ from office_cli.offices import Floor, Office
 from office_cli.seats import Assignment, SeatService
 
 _PRIVATE_PLACEHOLDER = "(private)"
+_SHELL_PATH = Path(__file__).parent / "static" / "index.html"
 
 
 def register_routes(app: Any, service: SeatService) -> None:
@@ -25,6 +27,8 @@ def register_routes(app: Any, service: SeatService) -> None:
     from fastapi.responses import HTMLResponse, RedirectResponse
 
     from office_cli.server._app import static_dir
+
+    shell_html = _SHELL_PATH.read_text(encoding="utf-8")
 
     @app.get("/api/offices")
     def get_offices() -> dict:
@@ -44,7 +48,7 @@ def register_routes(app: Any, service: SeatService) -> None:
         seats = [_redact(a) for a in service.list_seats(floor=floor_id)]
         return {
             "floor": _floor_to_dict(floor, office_id),
-            "svg_url": f"/floors/{floor.svg.name}",
+            "svg_url": f"/svgs/{floor.svg.name}",
             "seats": seats,
         }
 
@@ -57,22 +61,39 @@ def register_routes(app: Any, service: SeatService) -> None:
 
     @app.get("/empty", response_class=HTMLResponse)
     def empty_state() -> str:
-        return _SHELL_HTML.replace(
-            "<!--BANNER-->",
-            "<p class='banner'>No floors are configured. Add one to "
-            "<code>data/offices.yaml</code>.</p>",
-        )
+        # The empty-state response just reuses the shell; the frontend
+        # surfaces the no-floors banner from the API response shape.
+        return shell_html
+
+    @app.get("/floors/{floor_id}")
+    def floor_redirect(floor_id: str, seat: str = "") -> RedirectResponse:
+        """Resolve short ``/floors/{floor_id}`` URLs to the canonical SPA path.
+
+        Slack's `/whereis` deep-link button (Stage 4) builds URLs of the
+        form ``${OFFICE_WEB_BASE_URL}/floors/{floor}?seat={seat}`` — we
+        redirect to ``/offices/{office}/floors/{floor}`` here so callers
+        do not need to know the office id. ``seat`` is preserved
+        verbatim; other query params are dropped since the documented
+        v1 surface only carries ``seat``.
+        """
+        floor, office_id = _resolve_floor(service, floor_id)
+        if floor is None:
+            raise HTTPException(status_code=404, detail="unknown floor")
+        target = f"/offices/{office_id}/floors/{floor_id}"
+        if seat:
+            target += f"?seat={seat}"
+        return RedirectResponse(url=target, status_code=307)
 
     @app.get("/offices/{office_id}/floors/{floor_id}", response_class=HTMLResponse)
     def spa_shell(office_id: str, floor_id: str) -> str:
         # The shell is the same regardless of office/floor — the path
-        # parameters are read by app.js from window.location. We still
-        # validate them server-side so an invalid URL surfaces 404
-        # rather than rendering a broken empty map.
+        # parameters are read by app.js from globalThis.location. We
+        # still validate them server-side so an invalid URL surfaces
+        # 404 rather than rendering a broken empty map.
         floor, declared_office = _resolve_floor(service, floor_id)
         if floor is None or declared_office != office_id:
             raise HTTPException(status_code=404, detail="unknown office or floor")
-        return _SHELL_HTML
+        return shell_html
 
     @app.exception_handler(OfficeError)
     async def office_error_handler(_request, err: OfficeError):
@@ -114,11 +135,14 @@ def _floor_to_dict(floor: Floor, office_id: str) -> dict[str, Any]:
 def _redact(a: Assignment) -> dict[str, Any]:
     """Server-side redaction for ``hidden=TRUE`` rows.
 
-    The frontend never sees a private email or note. Stage 7 will pass
-    a role argument that lifts this for editors / planning users.
+    The frontend never sees a private email or note. Notes are scrubbed
+    whenever ``hidden=True`` regardless of whether ``employee_email`` is
+    populated — a privately-flagged seat that happens to be vacant must
+    not leak the operator's notes either. Stage 7 will pass a role
+    argument that lifts this for editors / planning users.
     """
-    if a.hidden and a.employee_email:
-        email_out: str | None = _PRIVATE_PLACEHOLDER
+    if a.hidden:
+        email_out: str | None = _PRIVATE_PLACEHOLDER if a.employee_email else None
         notes_out = ""
     else:
         email_out = a.employee_email or None
@@ -147,32 +171,3 @@ def _first_floor_path(service: SeatService) -> str | None:
         for floor in office.floors.values():
             return f"/offices/{office.id}/floors/{floor.id}"
     return None
-
-
-_SHELL_HTML = """\
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>office — seat map</title>
-  <link rel="stylesheet" href="/static/app.css">
-  <script type="module" src="/static/vendor/fuse.js"></script>
-  <script type="module" src="/static/app.js"></script>
-</head>
-<body>
-  <header class="topbar">
-    <div class="brand">office</div>
-    <input id="search" type="search" placeholder="Search seats, people, rooms…" autocomplete="off">
-    <select id="floor-picker" aria-label="Switch floor"></select>
-  </header>
-  <!--BANNER-->
-  <div id="banner" class="banner" hidden></div>
-  <div class="layout">
-    <aside id="results" class="results" aria-label="Search results"></aside>
-    <main id="map" class="map" aria-label="Floor map"></main>
-    <section id="detail" class="detail" aria-label="Selected seat detail" hidden></section>
-  </div>
-</body>
-</html>
-"""

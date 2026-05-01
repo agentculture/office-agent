@@ -14,8 +14,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - v1 seating Stage 5 — search-first web map
   ([#9](https://github.com/agentculture/office-agent/issues/9)). New
   `office_cli.server` subpackage with a FastAPI app exposing
-  `/api/offices`, `/api/floors/{id}`, the static SVGs, and the SPA
-  shell at `/offices/{id}/floors/{floor_id}`.
+  `/api/offices`, `/api/floors/{id}`, the SPA shell at
+  `/offices/{id}/floors/{floor_id}` (HTML loaded from
+  `office_cli/server/static/index.html`), the floor SVGs at
+  `/svgs/{filename}.svg`, and a `/floors/{id}` short-URL
+  redirect that resolves to the canonical SPA path so the Slack
+  `/whereis` deep-link button (Stage 4) just works.
 - New CLI verb `office serve [--host H] [--port N] [--data-dir D]`
   blocks on `uvicorn.run`. Reads from the same `build_service` factory
   as the CLI / Slack, so Stages 2 / 3 backends flow through.

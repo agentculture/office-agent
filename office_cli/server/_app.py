@@ -45,7 +45,10 @@ def build_app(service: SeatService, *, data_dir: Path | None = None) -> Any:
     app = FastAPI(title="office", docs_url=None, redoc_url=None)
     register_routes(app, service)
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
-    app.mount("/floors", StaticFiles(directory=str(floors_dir)), name="floors")
+    # Mount under ``/svgs`` (not ``/floors``) so the bare ``/floors/{id}``
+    # route below — used as a redirect entry point for Slack deep links —
+    # is unambiguous.
+    app.mount("/svgs", StaticFiles(directory=str(floors_dir)), name="svgs")
     return app
 
 

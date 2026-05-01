@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>office — seat map</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script type="module" src="/static/vendor/fuse.js"></script>
+  <script type="module" src="/static/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">office</div>
+    <input id="search" type="search" placeholder="Search seats, people, rooms…" autocomplete="off">
+    <select id="floor-picker" aria-label="Switch floor"></select>
+  </header>
+  <div id="banner" class="banner" hidden></div>
+  <div class="layout">
+    <aside id="results" class="results" aria-label="Search results"></aside>
+    <main id="map" class="map" aria-label="Floor map"></main>
+    <section id="detail" class="detail" aria-label="Selected seat detail" hidden></section>
+  </div>
+</body>
+</html>
