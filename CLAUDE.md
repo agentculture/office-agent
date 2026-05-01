@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Pre-bootstrap. The repo currently contains only `LICENSE` and `.gitignore`. The full v1 design lives in two GitHub issues — read them before doing any non-trivial work:
+Pre-bootstrap. No source code yet — only this file plus `LICENSE` and `.gitignore`. The full v1 design lives in two GitHub issues — read them before doing any non-trivial work:
 
 - [agentculture/office-agent#2](https://github.com/agentculture/office-agent/issues/2) — Bootstrap office-cli (0.0.1) from the AgentCulture sibling pattern. End-to-end recipe with exact files to fetch from `agentculture/steward` and `agentculture/afi-cli`.
 - [agentculture/office-agent#1](https://github.com/agentculture/office-agent/issues/1) — v1 floor-plan seating system. Splits work between human (Inkscape SVG tracing) and agent (backend, search, Slack `/whereis`).
@@ -15,9 +15,9 @@ Issue #2 is the next step. Issue #1 is the product on top of it.
 
 Office — a CLI and backend for managing seat assignments and meeting rooms across office floor plans. Floors are hand-traced SVGs with stable, conformant IDs; assignments are stored in a Google Sheet (v1) or DynamoDB (v2); people are pulled live from BambooHR (never stored locally). Slack `/whereis @user` is the primary user surface; a search-first web map is the secondary one.
 
-## Naming triplet (don't conflate)
+## Naming surfaces (don't conflate)
 
-The bootstrap issue lists three different identifiers that look similar — mixing them silently breaks imports or PyPI:
+The bootstrap issue uses several similar-looking identifiers across surfaces — mixing them silently breaks imports or PyPI:
 
 | Surface             | Value         | Notes                                                  |
 | ------------------- | ------------- | ------------------------------------------------------ |
@@ -61,7 +61,7 @@ Lessons paid for in advance — don't relitigate without a reason:
 - **BambooHR is the source of truth for people.** Never store name/email/role/photo locally; pull on request, cache 5 minutes. Offboarding in BambooHR must auto-vacate the seat without anyone editing the Sheet — this is the killer feature, verify it end-to-end.
 - **The Google Sheet is the CMS.** Don't build an in-app editor for assignments. Don't build an in-app SVG editor either — Inkscape is the editor for layouts.
 - **Audit log is append-only.** Seat changes never overwrite history; "who used to sit at 5-T-01?" must return chronological history.
-- **Multi-office from day one.** No hardcoded `tlv`. Adding a floor = drop SVG + add `offices.yaml` entry, no code change.
+- **Multi-office from day one.** No hardcoded `tlv`. Adding a floor = drop SVG + add `data/offices.yaml` entry, no code change.
 - **Future-dated assignments**: the data model carries `effective_from` / `effective_until` even if the UI ships without it. `?asOf=YYYY-MM-DD` renders the map as of that date.
 - **`hidden=TRUE`** rows show as "occupied (private)" to viewers; full details only to the `editor` / `planning` roles.
 - **Out of scope for v1**: hot-desking / desk booking, native mobile app, visitor/badge/sensor integration, in-app SVG editor.
