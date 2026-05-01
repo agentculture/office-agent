@@ -78,7 +78,7 @@ def test_sheets_requires_service_account(tmp_path: Path, monkeypatch: pytest.Mon
 
 
 def test_unknown_store_type_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OFFICE_STORE", "dynamo")
+    monkeypatch.setenv("OFFICE_STORE", "redis")
     with pytest.raises(OfficeError) as exc:
         resolve_storage(tmp_path)
     assert "unknown storage type" in exc.value.message

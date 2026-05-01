@@ -94,6 +94,23 @@ def _build_backends(data_dir: Path, cfg: StorageConfig):
             CsvStore(assignments_csv(data_dir)),
             CsvAuditLog(audit_log_csv(data_dir)),
         )
+    if cfg.type == "dynamo":
+        # Lazy import — boto3 (and therefore the dynamo shim) is optional.
+        from office_cli.seats.dynamo import (
+            Boto3DynamoClient,
+            DynamoAuditLog,
+            DynamoStore,
+        )
+
+        client = Boto3DynamoClient(region=cfg.region)
+        return (
+            DynamoStore(
+                client,
+                table=cfg.table_assignments,
+                cache_ttl_seconds=cfg.cache_ttl_seconds,
+            ),
+            DynamoAuditLog(client, table=cfg.table_audit),
+        )
     # Lazy import — gspread (and therefore the sheets shim) is optional.
     from office_cli.seats.sheets import GspreadClient, SheetsAuditLog, SheetsStore
 
@@ -105,3 +122,25 @@ def _build_backends(data_dir: Path, cfg: StorageConfig):
         SheetsStore(client, cache_ttl_seconds=cfg.cache_ttl_seconds),
         SheetsAuditLog(client),
     )
+
+
+def build_backends_for_type(data_dir: Path, store_type: str):
+    """Resolve a ``StorageConfig`` for ``store_type`` and build (store, audit).
+
+    Used by ``office seats migrate`` and ``office seats sync`` to spin up
+    a source / target pair driven by ``--from`` / ``--to`` flags. Reads
+    the same env / YAML config as :func:`build_service` would for that
+    type, with the type override applied last.
+    """
+    import os as _os  # local — avoid widening the module-level surface.
+
+    prior = _os.environ.get("OFFICE_STORE")
+    _os.environ["OFFICE_STORE"] = store_type
+    try:
+        cfg = resolve_storage(data_dir)
+    finally:
+        if prior is None:
+            _os.environ.pop("OFFICE_STORE", None)
+        else:
+            _os.environ["OFFICE_STORE"] = prior
+    return _build_backends(data_dir, cfg)

@@ -42,7 +42,8 @@ office-agent/
 │   ├── _roles.py                # RolesConfig / role_for_email / is_full_access (Stage 7)
 │   ├── offices/                 # offices.yaml loader + Office/Floor/Cluster/Room
 │   ├── floors/                  # SVG parse + ID contract + validator
-│   ├── seats/                   # AssignmentStore + Csv/Sheets stores + AuditLog + SeatService
+│   ├── seats/                   # AssignmentStore + Csv/Sheets/Dynamo stores + AuditLog + SeatService
+│   │                            # Stage 8: bi-directional sync via `office seats sync`
 │   ├── people/                  # Employee + EmployeeDirectory (Stub + BambooHR backends)
 │   ├── slack/                   # `/whereis` Bolt app + Socket Mode runner (optional [slack] extra)
 │   ├── server/                  # FastAPI seat-map server + vanilla-JS frontend (optional [web] extra)
@@ -63,7 +64,7 @@ office-agent/
 ```bash
 uv sync                           # install runtime + dev deps
 uv run pytest -n auto -v          # full suite, parallel
-uv run office --version           # 0.7.0
+uv run office --version           # 0.8.0
 uv run office learn               # agent affordance
 uv run office whoami              # auth probe stub
 uv run office floors validate floors/tlv-floor-5.svg
@@ -140,7 +141,7 @@ Rules: IDs unique within a file; floor number first; cluster letter uppercase; s
 Lessons paid for in advance — don't relitigate without a reason:
 
 - **BambooHR is the source of truth for people.** Never store name/email/role/photo locally; pull on request, cache 5 minutes. Offboarding in BambooHR must auto-vacate the seat without anyone editing the Sheet — this is the killer feature, verify it end-to-end.
-- **The Google Sheet is the CMS.** Don't build an in-app editor for assignments. Don't build an in-app SVG editor either — Inkscape is the editor for layouts.
+- **The Google Sheet is the CMS.** Don't build an in-app editor for assignments. Don't build an in-app SVG editor either — Inkscape is the editor for layouts. Stage 8 adds DynamoDB as a second runtime backend, but Sheets stays a first-class option — `office seats migrate --from X --to Y` (one-shot) and `office seats sync --primary {sheets,dynamo}` (bi-directional last-write-wins) keep them interoperable.
 - **Audit log is append-only.** Seat changes never overwrite history; "who used to sit at 5-T-01?" must return chronological history.
 - **Multi-office from day one.** No hardcoded `tlv`. Adding a floor = drop SVG + add `data/offices.yaml` entry, no code change.
 - **Future-dated assignments**: the data model carries `effective_from` / `effective_until` and Stage 6 enforces them at the service layer. `office seats assign --from / --until`, `office whereis --as-of`, `office seats list --as-of`, `?asOf=YYYY-MM-DD` on the web map, and a trailing `YYYY-MM-DD` token on Slack `/whereis` all flow through the same window check. `effective_*` is stored as `YYYY-MM-DD` (date precision, no time); `last_updated` and audit timestamps stay full ISO-8601.

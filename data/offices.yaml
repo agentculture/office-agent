@@ -18,6 +18,19 @@
 #       - "hr-it@tipalti.com"
 #     planning:
 #       - "facilities@tipalti.com"
+#
+# Stage 8 — DynamoDB backend (issue #12). Selectable via
+# `storage.type: dynamo`. Sheets remains a first-class option; use
+# `office seats migrate` for one-shot copy, or `office seats sync`
+# for periodic bi-directional reconciliation. Example:
+#
+#   storage:
+#     type: dynamo
+#     dynamo:
+#       table_assignments: office-assignments
+#       table_audit: office-audit-log
+#       region: us-east-1
+#       cache_ttl_seconds: 300
 
 offices:
   - id: tlv

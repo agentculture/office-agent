@@ -1,4 +1,4 @@
-# Architecture — v0.7.0 (Stages 1–7)
+# Architecture — v0.8.0 (Stages 1–8)
 
 `office` ships in stages on top of issue
 [#1](https://github.com/agentculture/office-agent/issues/1). This document
@@ -298,13 +298,47 @@ seats), `planning` (facilities — same as editor in v1).
 - The planning role's draft-SVG and future-dated visibility carve-outs
   from issue #1 stay deferred.
 
+## Stage 8 — implemented in v0.8.0
+
+DynamoDB store + bi-directional Sheets sync
+([#12](https://github.com/agentculture/office-agent/issues/12)).
+
+- `office_cli/seats/dynamo/`: `DynamoStore` + `DynamoAuditLog` behind
+  the same `AssignmentStore` / `AuditLog` Protocols as the Sheets
+  backend. The `DynamoClient` Protocol exposes only the four
+  operations the store + audit need (`scan_all`, `put_item`,
+  `batch_put`, `query_by_pk`); `Boto3DynamoClient` is the production
+  implementation with lazy `boto3` import. Tests use a hand-rolled
+  `FakeDynamoClient` (no `moto` dependency).
+- Schema: `office-assignments` table keyed on `seat_id`;
+  `office-audit-log` keyed on (`seat_id`, `timestamp`). The audit
+  PK+SK pair makes `put_item` idempotent — re-runs of `migrate`
+  overwrite the same rows rather than duplicating them.
+- Read path: `DynamoStore.list()` does one `scan` and caches with a
+  5-minute TTL, identical to `SheetsStore`. `by_email` filters in
+  memory. A GSI on `employee_email` is documented as Stage-9
+  hardening but not required for v1 scale.
+- `office seats migrate --from {csv,sheets,dynamo} --to {csv,sheets,dynamo}
+  [--dry-run] [--audit-append]`: one-shot import/export between any
+  two backends. Idempotent for assignments (upsert by `seat_id`);
+  audit idempotency is target-dependent.
+- `office seats sync --primary {sheets,dynamo} [--dry-run]`:
+  bi-directional reconciliation between Sheets and Dynamo with
+  last-write-wins per row by `last_updated`. `office_cli/seats/_sync.py`
+  hosts the pure `reconcile()` reconciler — no I/O at the
+  reconciliation layer.
+- **Sheets stays a first-class runtime backend**. Stage 8 adds
+  Dynamo as an alternative; it does not deprecate Sheets. Operators
+  who prefer the spreadsheet UI as their primary editor keep using
+  it. The migrate + sync verbs make them interoperable.
+
 ## Deferred surfaces
 
 Each is a separate issue/PR.
 
 | Stage              | Surface                                       | Notes                                                                   |
 | ------------------ | --------------------------------------------- | ----------------------------------------------------------------------- |
-| 8. DynamoDB        | `office_cli.seats.DynamoStore`                | Migration script from Sheets, kept identical Protocol.                  |
+| 9. GSI + observability | `employee_email` GSI on `office-assignments` | Drops the `scan` + in-memory filter for `by_email`.                     |
 
 ## Operating notes
 
