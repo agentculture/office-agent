@@ -7,6 +7,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-01
+
+### Added
+
+- v1 seating Stage 2 — Google Sheets-backed `AssignmentStore` and append-only
+  `AuditLog`. Selectable via `data/offices.yaml` (`storage.type: sheets`) or
+  the `OFFICE_STORE` / `OFFICE_SHEETS_ID` / `OFFICE_SHEETS_SA` env vars.
+- New optional extra: `pip install office-cli[sheets]` pulls `gspread>=6.0`.
+  CSV users do not pay for the dep tree.
+- `office_cli.seats.sheets` package: `SheetsStore`, `SheetsAuditLog`, and a
+  thin `SheetsClient` shim so unit tests use a `FakeSheetsClient` without
+  real credentials. Reads honor a 5-minute TTL cache; writes invalidate it.
+- `build_service(data_dir)` picks the assignment-store / audit-log pair from
+  the resolved storage config; the CSV path remains the default.
+
+### Changed
+
+- `office_cli.seats.__init__` re-exports the Sheets backends behind a
+  guarded import so the package still loads cleanly without `gspread`.
+- `office_cli.seats.AuditLog` is now a `Protocol` (mirroring the
+  `AssignmentStore` shape from Stage 1). The CSV concrete class is
+  `office_cli.seats.CsvAuditLog`. `AuditLog` is still re-exported, so
+  type-checked downstream callers see the Protocol; runtime callers
+  that constructed `AuditLog(path)` need to switch to `CsvAuditLog(path)`.
+
 ## [0.1.0] - 2026-05-01
 
 ### Added
@@ -54,3 +79,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `CLAUDE.md` updated to cover the post-bootstrap conventions while
   preserving the SVG ID contract and architectural guardrails for the v1
   seating system (issue #1).
+
+[Unreleased]: https://github.com/agentculture/office-agent/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/agentculture/office-agent/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/agentculture/office-agent/compare/v0.0.1...v0.1.0
+[0.0.1]: https://github.com/agentculture/office-agent/releases/tag/v0.0.1

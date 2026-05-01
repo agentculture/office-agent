@@ -1,18 +1,26 @@
-"""Append-only CSV audit log for seat changes.
+"""Append-only audit log for seat changes.
 
 Header::
 
     timestamp,actor,action,seat_id,employee_email,old_employee_email,note
 
 History is never overwritten; "who used to sit at <seat>?" is just a
-chronological filter on this file.
+chronological filter on this log.
+
+Two implementations live in the codebase:
+
+* :class:`CsvAuditLog` (here) — append-only CSV file, default for v1.
+* :class:`office_cli.seats.sheets.SheetsAuditLog` — Sheets-backed.
+
+Both implement the :class:`AuditLog` Protocol, which is what
+:class:`office_cli.seats.SeatService` is typed against.
 """
 
 from __future__ import annotations
 
 import csv
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Protocol
 
 from office_cli.seats._models import AuditEntry
 
@@ -27,7 +35,25 @@ FIELDNAMES = [
 ]
 
 
-class AuditLog:
+class AuditLog(Protocol):
+    """Structural type every audit-log backend must satisfy."""
+
+    def append(self, entry: AuditEntry) -> None:
+        """Append a single entry."""
+
+    def append_many(self, entries: Iterable[AuditEntry]) -> None:
+        """Append multiple entries (atomic-ish per backend)."""
+
+    def all(self) -> list[AuditEntry]:
+        """Return every entry in insertion order."""
+
+    def for_seat(self, seat_id: str) -> list[AuditEntry]:
+        """Return every entry for ``seat_id``."""
+
+
+class CsvAuditLog:
+    """Append-only CSV implementation of :class:`AuditLog`."""
+
     def __init__(self, path: Path) -> None:
         self.path = path
 
