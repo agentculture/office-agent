@@ -75,11 +75,11 @@ def register(sub: argparse._SubParsersAction) -> None:
     )
     p.add_argument(
         "--bot-token",
-        help="Override SLACK_BOT_TOKEN (xoxb-…). Env takes precedence if both unset.",
+        help="Override SLACK_BOT_TOKEN (xoxb-…); otherwise falls back to the env var.",
     )
     p.add_argument(
         "--app-token",
-        help="Override SLACK_APP_TOKEN (xapp-…). Env takes precedence if both unset.",
+        help="Override SLACK_APP_TOKEN (xapp-…); otherwise falls back to the env var.",
     )
     add_data_dir_arg(p)
     p.set_defaults(func=cmd_slack_serve)

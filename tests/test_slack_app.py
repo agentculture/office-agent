@@ -259,6 +259,46 @@ def test_deep_link_button_when_base_url_set(
     assert "5-T-01" in button["url"]
 
 
+def test_text_fallback_does_not_leak_email_for_mention(data_dir: Path) -> None:
+    """Qodo Q2: the `text` fallback must not expose the resolved profile
+    email when the caller used an @mention. Otherwise screen-readers or
+    older clients see what the blocks deliberately redacted."""
+    service = _service_with_active(data_dir, "alice@example.com")
+    # No seat assigned for alice — exercises the no-seat branch where
+    # the leak was found.
+    app = build_app(service, app=FakeSlackApp())
+    client = FakeSlackClient(users={"U123": {"profile": {"email": "alice@example.com"}}})
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"channel_id": "C1", "user_id": "U999", "text": "<@U123|alice>"},
+        client=client,
+    )
+    posted = client.posted[-1]
+    assert "alice@example.com" not in posted["text"]
+    assert "<@U123>" in posted["text"]
+
+
+def test_command_payload_takes_precedence_for_channel_user(data_dir: Path) -> None:
+    """Copilot C2: prefer command[channel_id]/user_id; fall back to body."""
+    service = _service_with_active(data_dir, "alice@example.com")
+    service.assign("5-T-01", "alice@example.com")
+    app = build_app(service, app=FakeSlackApp())
+    client = FakeSlackClient()
+    _invoke(
+        app,
+        body={"channel_id": "C-from-body", "user_id": "U-from-body"},
+        command={
+            "channel_id": "C-from-command",
+            "user_id": "U-from-command",
+            "text": "alice@example.com",
+        },
+        client=client,
+    )
+    assert client.posted[-1]["channel"] == "C-from-command"
+    assert client.posted[-1]["user"] == "U-from-command"
+
+
 def test_text_fallback_in_postephemeral(data_dir: Path) -> None:
     """The handler always passes a `text` fallback so screen readers and
     older clients render something even when blocks are dropped."""

@@ -32,10 +32,14 @@ def build_app(service: SeatService, *, app: Any | None = None) -> Any:
         ack()
         text = command.get("text", "")
         target = parse_target(text)
-        blocks, label = _resolve_and_lookup(service, client, body, target)
+        blocks, label = _resolve_and_lookup(service, client, body, command, target)
+        # ``command`` is the slash-command payload and is the canonical
+        # source for ``channel_id``/``user_id``; ``body`` is the Bolt-
+        # wrapped envelope and may differ in some adapter shapes. Prefer
+        # command, fall back to body.
         client.chat_postEphemeral(
-            channel=body.get("channel_id", ""),
-            user=body.get("user_id", ""),
+            channel=command.get("channel_id") or body.get("channel_id", ""),
+            user=command.get("user_id") or body.get("user_id", ""),
             blocks=blocks,
             text=label,  # fallback for clients that ignore blocks
         )
@@ -47,6 +51,7 @@ def _resolve_and_lookup(
     service: SeatService,
     client: Any,
     body: dict,
+    command: dict,
     target: ParsedTarget,
 ) -> tuple[list[dict[str, Any]], str]:
     """Resolve a :class:`ParsedTarget` to an email + label and run lookup."""
@@ -58,7 +63,7 @@ def _resolve_and_lookup(
         label = email
         return _lookup(service, email, label)
 
-    user_id = target.user_id or body.get("user_id", "")
+    user_id = target.user_id or command.get("user_id") or body.get("user_id", "")
     if not user_id:
         return _blocks.lookup_failed("no Slack user id supplied"), "no user id"
 
@@ -67,7 +72,7 @@ def _resolve_and_lookup(
         return _blocks.lookup_failed(fail_reason), "lookup failed"
     # When the caller asked about themselves, label as "you"; otherwise
     # use the @-mention so Slack renders the name.
-    label = f"<@{user_id}>" if not target.self_lookup else "you"
+    label = "you" if target.self_lookup else f"<@{user_id}>"
     return _lookup(service, email, label)
 
 
@@ -81,16 +86,17 @@ def _email_from_user_id(client: Any, user_id: str) -> tuple[str, str]:
     profile = user.get("profile") or {}
     email = (profile.get("email") or "").strip()
     if not email:
-        return "", (
-            "no email on that Slack profile (the bot needs the " "`users:read.email` scope)"
-        )
+        return "", ("no email on that Slack profile (the bot needs the `users:read.email` scope)")
     return email, ""
 
 
 def _lookup(service: SeatService, email: str, label: str) -> tuple[list[dict[str, Any]], str]:
+    # Both blocks and the `text` fallback use ``label`` so we never leak
+    # the resolved profile email through the screen-reader / older-client
+    # rendering path — it would defeat the redaction the blocks rely on.
     assignment = service.whereis(email)
     if assignment is None:
-        return _blocks.no_seat(label), f"no seat for {email}"
+        return _blocks.no_seat(label), f"no seat for {label}"
     if assignment.hidden:
         return _blocks.hidden_private(assignment, target_label=label), "occupied (private)"
     return _blocks.occupied(assignment, target_label=label), f"{label} → {assignment.seat_id}"

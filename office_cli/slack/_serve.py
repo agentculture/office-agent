@@ -1,7 +1,8 @@
 """Blocking entry point for Slack Socket Mode.
 
-Lazy-imports ``slack_bolt`` and ``slack_sdk.socket_mode`` so installs
-without the ``[slack]`` extra still load the parent package cleanly.
+Lazy-imports ``SocketModeHandler`` from
+``slack_bolt.adapter.socket_mode`` so installs without the ``[slack]``
+extra still load the parent package cleanly.
 """
 
 from __future__ import annotations

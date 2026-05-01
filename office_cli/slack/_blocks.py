@@ -39,7 +39,7 @@ def occupied(assignment: Assignment, *, target_label: str) -> list[dict[str, Any
             "text": {
                 "type": "mrkdwn",
                 "text": (
-                    f"*{target_label}* sits at *{assignment.seat_id}* " f"on `{assignment.floor}`."
+                    f"*{target_label}* sits at *{assignment.seat_id}* on `{assignment.floor}`."
                 ),
             },
         }
@@ -69,7 +69,7 @@ def hidden_private(assignment: Assignment, *, target_label: str) -> list[dict[st
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": (f"*{target_label}* — occupied (private) on " f"`{assignment.floor}`."),
+                "text": f"*{target_label}* — occupied (private) on `{assignment.floor}`.",
             },
         }
     ]
