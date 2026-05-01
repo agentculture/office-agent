@@ -11,6 +11,7 @@ is treated as a ``viewer``.
 
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from office_cli._dates import parse_iso_date, today_iso_date
 from office_cli._roles import RolesConfig
@@ -89,20 +90,9 @@ def register_routes(
 
     @app.get("/offices/{office_id}/floors/{floor_id}", response_class=HTMLResponse)
     def spa_shell(request: Request, office_id: str, floor_id: str):
-        # The shell is the same regardless of office/floor — the path
-        # parameters are read by app.js from globalThis.location. We
-        # still validate them server-side so an invalid URL surfaces
-        # 404 rather than rendering a broken empty map.
-        floor, declared_office = _resolve_floor(service, floor_id)
-        if floor is None or declared_office != office_id:
-            raise HTTPException(status_code=404, detail="unknown office or floor")
-        # Stage 7: redirect anonymous browsers to SSO when auth is on.
-        if oidc is not None and current_user(request, oidc=oidc) is None:
-            next_url = request.url.path
-            if request.url.query:
-                next_url += f"?{request.url.query}"
-            return RedirectResponse(url=f"/auth/login?next={next_url}", status_code=302)
-        return HTMLResponse(content=shell_html)
+        return _spa_shell_response(
+            service, oidc, request, office_id, floor_id, shell_html, HTTPException
+        )
 
     @app.exception_handler(OfficeError)
     async def office_error_handler(_request, err: OfficeError):
@@ -115,6 +105,37 @@ def register_routes(
 
     # Stash so static_dir() callers (tests) can find it consistently.
     app.state.static_dir = static_dir()
+
+
+def _spa_shell_response(
+    service: SeatService,
+    oidc: Any,
+    request: Any,
+    office_id: str,
+    floor_id: str,
+    shell_html: str,
+    http_exception: Any,
+) -> Any:
+    """Validate the SPA URL, then either serve the shell or redirect to SSO.
+
+    Lifted out of the closure inside :func:`register_routes` so the
+    closure stays small (Sonar S3776). The redirect path URL-encodes
+    ``next`` so an originating URL with ``&``-separated query params
+    round-trips through the IdP intact (Qodo Q1 on PR #20).
+    """
+    from fastapi.responses import HTMLResponse, RedirectResponse
+
+    floor, declared_office = _resolve_floor(service, floor_id)
+    if floor is None or declared_office != office_id:
+        raise http_exception(status_code=404, detail="unknown office or floor")
+    if oidc is not None and current_user(request, oidc=oidc) is None:
+        next_url = request.url.path
+        if request.url.query:
+            next_url += f"?{request.url.query}"
+        # Quote the whole path+query as a single value so any embedded
+        # ``&`` / ``?`` / ``=`` characters survive the round-trip.
+        return RedirectResponse(url=f"/auth/login?next={quote(next_url, safe='')}", status_code=302)
+    return HTMLResponse(content=shell_html)
 
 
 def _build_floor_response(

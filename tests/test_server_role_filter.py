@@ -128,7 +128,37 @@ def test_sso_redirects_unauth_browser(data_dir: Path) -> None:
     with TestClient(build_app(s, data_dir=data_dir, oidc=oidc)) as c:
         r = c.get("/offices/tlv/floors/tlv-floor-5", follow_redirects=False)
     assert r.status_code == 302
-    assert r.headers["location"].startswith("/auth/login?next=/offices/tlv/floors/tlv-floor-5")
+    # ``next`` is URL-encoded so embedded ``&`` / ``?`` / ``=`` round-trip.
+    assert r.headers["location"] == "/auth/login?next=%2Foffices%2Ftlv%2Ffloors%2Ftlv-floor-5"
+
+
+def test_sso_redirect_preserves_query_params(data_dir: Path) -> None:
+    """Qodo Q1 on PR #20 — original URL with ``&``-joined query params
+    must round-trip through the redirect intact.
+    """
+    pytest.importorskip("authlib")
+    from office_cli.server._auth import OIDCConfig
+
+    oidc = OIDCConfig(
+        issuer="https://idp.example.com",
+        client_id="cid",
+        client_secret="csecret",
+        redirect_url="https://office.example.com/auth/callback",
+        session_secret="x" * 32,
+    )
+    s = _service(data_dir)
+    with TestClient(build_app(s, data_dir=data_dir, oidc=oidc)) as c:
+        r = c.get(
+            "/offices/tlv/floors/tlv-floor-5?seat=5-T-01&asOf=2026-07-01",
+            follow_redirects=False,
+        )
+    assert r.status_code == 302
+    # Decode the next param to check the original URL survives.
+    from urllib.parse import parse_qs, urlparse
+
+    location = r.headers["location"]
+    next_param = parse_qs(urlparse(location).query)["next"][0]
+    assert next_param == "/offices/tlv/floors/tlv-floor-5?seat=5-T-01&asOf=2026-07-01"
 
 
 def test_sso_test_role_header_ignored_when_oidc_enabled(data_dir: Path) -> None:

@@ -40,7 +40,7 @@ def test_resolve_rejects_partial_config() -> None:
 
 def test_resolve_treats_blank_as_missing() -> None:
     """All-blank → None; some-blank → partial-config error."""
-    assert resolve_oidc({k: "" for k in _ALL_VARS}) is None
+    assert resolve_oidc(dict.fromkeys(_ALL_VARS, "")) is None
     partial = dict(_ALL_VARS)
     partial["SESSION_SECRET"] = "   "
     with pytest.raises(OfficeError):
