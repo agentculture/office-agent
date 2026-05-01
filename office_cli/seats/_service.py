@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from typing import Iterable, cast
 
 from office_cli._dates import is_effective, today_iso_date, validate_window
+from office_cli._roles import is_full_access
 from office_cli.cli._errors import EXIT_USER_ERROR, OfficeError
 from office_cli.floors import FloorSvg
 from office_cli.offices import Office
@@ -58,6 +59,7 @@ class SeatService:
         only_vacant: bool = False,
         only_occupied: bool = False,
         as_of: str | None = None,
+        role: str | None = None,
     ) -> list[Assignment]:
         existing = {a.seat_id: a for a in self.store.list()}
         out: list[Assignment] = []
@@ -68,12 +70,19 @@ class SeatService:
             if as_of is not None and not is_effective(a, as_of):
                 a = Assignment(seat_id=seat_id, floor=floor_id)
             a = self._apply_autovacate(a)
+            a = _apply_role_redaction(a, role)
             if not _row_matches_occupancy(a, only_vacant, only_occupied):
                 continue
             out.append(a)
         return out
 
-    def whereis(self, email: str, *, as_of: str | None = None) -> Assignment | None:
+    def whereis(
+        self,
+        email: str,
+        *,
+        as_of: str | None = None,
+        role: str | None = None,
+    ) -> Assignment | None:
         if not self.directory.is_active(email):
             return None
         a = self.store.by_email(email)
@@ -81,7 +90,7 @@ class SeatService:
             return None
         if as_of is not None and not is_effective(a, as_of):
             return None
-        return a
+        return _apply_role_redaction(a, role)
 
     def _apply_autovacate(self, a: Assignment) -> Assignment:
         """Return ``a`` with ``employee_email`` cleared if the employee is
@@ -323,3 +332,46 @@ def _row_matches_occupancy(a: Assignment, only_vacant: bool, only_occupied: bool
     if only_occupied and a.is_vacant:
         return False
     return True
+
+
+def _apply_role_redaction(a: Assignment, role: str | None) -> Assignment:
+    """Stage 7 view-time redaction for ``hidden=TRUE`` rows.
+
+    ``role=None`` is the unrestricted CLI default — pass through. Editor
+    and planning see full details (``is_full_access``). Viewer sees a
+    redacted row: blank ``employee_email`` / ``notes`` and ``redacted=True``
+    so the surface renderer can show ``"(private)"`` instead of
+    ``"(vacant)"``.
+
+    A hidden-but-vacant row has nothing to hide — ``redacted`` stays
+    ``False`` so the surface renders it as a regular vacant seat, not
+    as ``"(private)"``. Notes still get scrubbed (the privacy intent on
+    the row stands even when there's no occupant — Qodo Q4 from
+    Stage 5).
+    """
+    if not a.hidden or is_full_access(role):
+        return a
+    if not a.employee_email:
+        # Hidden + vacant: no email to hide; only scrub notes.
+        return Assignment(
+            seat_id=a.seat_id,
+            floor=a.floor,
+            employee_email="",
+            last_updated=a.last_updated,
+            hidden=True,
+            notes="",
+            effective_from=a.effective_from,
+            effective_until=a.effective_until,
+            redacted=False,
+        )
+    return Assignment(
+        seat_id=a.seat_id,
+        floor=a.floor,
+        employee_email="",
+        last_updated=a.last_updated,
+        hidden=True,
+        notes="",
+        effective_from=a.effective_from,
+        effective_until=a.effective_until,
+        redacted=True,
+    )

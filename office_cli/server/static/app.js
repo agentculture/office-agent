@@ -29,6 +29,7 @@ const els = {
   detail: document.getElementById("detail"),
   banner: document.getElementById("banner"),
   floorPicker: document.getElementById("floor-picker"),
+  userInfo: document.getElementById("user-info"),
 };
 
 const state = {
@@ -345,6 +346,7 @@ async function loadFloor(officeId, floorId, asOf) {
   state.currentFloorId = floorId;
   state.currentAsOf = asOf || null;
   state.seats = data.seats;
+  renderUserInfo(data.user || null);
   state.fuse = globalThis.Fuse
     ? new globalThis.Fuse(state.seats.map(searchableSeat), FUSE_OPTIONS)
     : null;
@@ -394,6 +396,30 @@ async function loadOffices() {
 
 function setFloorPickerValue(officeId, floorId) {
   els.floorPicker.value = `${officeId}|${floorId}`;
+}
+
+function renderUserInfo(user) {
+  // Stage 7: header slot showing the signed-in email + role + a logout
+  // link. Hidden when the API response carries `user: null` (auth-
+  // disabled mode for local dev).
+  if (!els.userInfo) return;
+  els.userInfo.replaceChildren();
+  if (!user) {
+    els.userInfo.hidden = true;
+    return;
+  }
+  els.userInfo.hidden = false;
+  els.userInfo.appendChild(el("span", { className: "user-email" }, user.email || ""));
+  els.userInfo.appendChild(el("span", { className: "user-role" }, ` (${user.role || "viewer"})`));
+  const logout = el("button", { type: "button", className: "logout" }, "Sign out");
+  logout.addEventListener("click", async () => {
+    try {
+      await fetch("/auth/logout", { method: "POST", redirect: "manual" });
+    } finally {
+      globalThis.location.reload();
+    }
+  });
+  els.userInfo.appendChild(logout);
 }
 
 function showAsOfBanner(date) {

@@ -6,13 +6,13 @@ BambooHR; assignments live in a Google Sheet (v1) or DynamoDB (v2). The
 CLI exposes the same operations as the Slack `/whereis` command and the
 web map.
 
-> **Status — v0.6.0.** Stages 1–6 of the v1 seating system are in:
+> **Status — v0.7.0.** Stages 1–7 of the v1 seating system are in:
 > floor SVG parser/validator, CSV / Google Sheets-backed assignment
 > store with append-only audit log, BambooHR-backed `EmployeeDirectory`
 > with the auto-vacate killer feature, CLI verbs (`floors`, `seats`,
 > `whereis`), a Slack `/whereis` slash-command listener, a search-first
-> web map, and effective-date enforcement. SSO/roles and DynamoDB
-> land in later stages. See
+> web map, effective-date enforcement, and SSO + role-aware redaction.
+> DynamoDB lands in Stage 8. See
 > [issue #1](https://github.com/agentculture/office-agent/issues/1).
 
 ## Naming surfaces
@@ -162,6 +162,49 @@ shows the same view, deep-linkable.
 `effective_from` / `effective_until` are stored as `YYYY-MM-DD` (date
 precision); `last_updated` and audit-log timestamps stay full ISO-8601.
 Empty bounds mean "always begins" / "no end".
+
+### SSO + roles
+
+The web frontend can be gated behind your IdP via OIDC. Three roles
+are recognized: `viewer` (default — sees `hidden=TRUE` seats as
+"occupied (private)"), `editor` (HR/IT — full details on hidden
+seats), and `planning` (facilities — same as editor in v1).
+
+```bash
+pip install office-cli[sso,web]
+export OIDC_ISSUER=https://your-idp.example.com
+export OIDC_CLIENT_ID=office-agent
+export OIDC_CLIENT_SECRET=xxx
+export OIDC_REDIRECT_URL=https://office.example.com/auth/callback
+export SESSION_SECRET=$(openssl rand -hex 32)
+office serve --port 8000
+```
+
+Role mapping lives in `data/offices.yaml` under a top-level `roles:`
+block:
+
+```yaml
+roles:
+  editor:
+    - "hr-it@tipalti.com"
+    - "alice@tipalti.com"
+  planning:
+    - "facilities@tipalti.com"
+```
+
+Anything not listed is `viewer` — including unmatched authenticated
+users.
+
+When the OIDC env vars are unset, `office serve` runs in
+**auth-disabled** mode: no redirects, no session middleware, every
+request is anonymous. This is the default for local dev. An optional
+`X-Test-Role: editor` request header drives role-aware behavior in
+that mode (useful for `curl` smoke tests). The header is **only**
+honored when OIDC is disabled.
+
+The CLI is operator-only and **always** unrestricted (no role flag).
+Slack `/whereis` resolves the calling user's role from their email
+via the same roles map.
 
 ## Adding a new floor
 

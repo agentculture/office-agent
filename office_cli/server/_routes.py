@@ -1,35 +1,50 @@
 """HTTP routes for the seat-map server.
 
 The endpoints are intentionally thin — they map ``SeatService`` /
-``Office`` / ``Floor`` shapes to plain JSON, applying the **server-side
-redaction** for ``hidden=TRUE`` rows so the frontend never sees a
-private email or note.
+``Office`` / ``Floor`` shapes to plain JSON.
 
-Stage 7 will introduce role-based unredaction; until then every caller
-is treated as a ``viewer``.
+Role-aware redaction (Stage 7) is applied at the **service** layer:
+``SeatService.list_seats(role=...)`` clears the email + notes on
+``hidden=TRUE`` rows when the caller's role is ``viewer`` and sets a
+``redacted=True`` flag on the returned :class:`Assignment`. This
+module's :func:`_redact` helper just maps that view-time state onto
+the API JSON shape — the redacted hidden row gets the
+``"(private)"`` placeholder, while editor/planning callers see full
+details with ``redacted=False``.
+
+Anonymous browsers (no session) default to ``viewer`` via
+:func:`office_cli.server._auth.role_from_user`.
 """
-
-from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from office_cli._dates import parse_iso_date, today_iso_date
+from office_cli._roles import RolesConfig
 from office_cli.cli._errors import EXIT_USER_ERROR, OfficeError
 from office_cli.offices import Floor, Office
 from office_cli.seats import Assignment, SeatService
+from office_cli.server._auth import OIDCConfig, current_user, role_from_user
 
 _PRIVATE_PLACEHOLDER = "(private)"
 _SHELL_PATH = Path(__file__).parent / "static" / "index.html"
 
 
-def register_routes(app: Any, service: SeatService) -> None:
-    from fastapi import HTTPException, Query
+def register_routes(
+    app: Any,
+    service: SeatService,
+    *,
+    oidc: OIDCConfig | None = None,
+    roles: RolesConfig | None = None,
+) -> None:
+    from fastapi import HTTPException, Query, Request
     from fastapi.responses import HTMLResponse, RedirectResponse
 
     from office_cli.server._app import static_dir
 
     shell_html = _SHELL_PATH.read_text(encoding="utf-8")
+    _ = roles  # Reserved for future surface-side role config; service applies redaction.
 
     @app.get("/api/offices")
     def get_offices() -> dict:
@@ -37,6 +52,7 @@ def register_routes(app: Any, service: SeatService) -> None:
 
     @app.get("/api/floors/{floor_id}")
     def get_floor(
+        request: Request,
         floor_id: str,
         as_of: str = "",
         # Accept ``?asOf=`` (camelCase) as an alias so direct-API callers
@@ -44,7 +60,8 @@ def register_routes(app: Any, service: SeatService) -> None:
         # are passed, ``as_of`` wins.
         as_of_camel: str = Query("", alias="asOf"),
     ) -> dict:
-        return _build_floor_response(service, floor_id, as_of or as_of_camel, HTTPException)
+        user = current_user(request, oidc=oidc)
+        return _build_floor_response(service, floor_id, as_of or as_of_camel, HTTPException, user)
 
     @app.get("/", response_class=RedirectResponse)
     def root() -> str:
@@ -79,15 +96,10 @@ def register_routes(app: Any, service: SeatService) -> None:
         return RedirectResponse(url=target, status_code=307)
 
     @app.get("/offices/{office_id}/floors/{floor_id}", response_class=HTMLResponse)
-    def spa_shell(office_id: str, floor_id: str) -> str:
-        # The shell is the same regardless of office/floor — the path
-        # parameters are read by app.js from globalThis.location. We
-        # still validate them server-side so an invalid URL surfaces
-        # 404 rather than rendering a broken empty map.
-        floor, declared_office = _resolve_floor(service, floor_id)
-        if floor is None or declared_office != office_id:
-            raise HTTPException(status_code=404, detail="unknown office or floor")
-        return shell_html
+    def spa_shell(request: Request, office_id: str, floor_id: str):
+        return _spa_shell_response(
+            service, oidc, request, office_id, floor_id, shell_html, HTTPException
+        )
 
     @app.exception_handler(OfficeError)
     async def office_error_handler(_request, err: OfficeError):
@@ -102,11 +114,43 @@ def register_routes(app: Any, service: SeatService) -> None:
     app.state.static_dir = static_dir()
 
 
+def _spa_shell_response(
+    service: SeatService,
+    oidc: Any,
+    request: Any,
+    office_id: str,
+    floor_id: str,
+    shell_html: str,
+    http_exception: Any,
+) -> Any:
+    """Validate the SPA URL, then either serve the shell or redirect to SSO.
+
+    Lifted out of the closure inside :func:`register_routes` so the
+    closure stays small (Sonar S3776). The redirect path URL-encodes
+    ``next`` so an originating URL with ``&``-separated query params
+    round-trips through the IdP intact (Qodo Q1 on PR #20).
+    """
+    from fastapi.responses import HTMLResponse, RedirectResponse
+
+    floor, declared_office = _resolve_floor(service, floor_id)
+    if floor is None or declared_office != office_id:
+        raise http_exception(status_code=404, detail="unknown office or floor")
+    if oidc is not None and current_user(request, oidc=oidc) is None:
+        next_url = request.url.path
+        if request.url.query:
+            next_url += f"?{request.url.query}"
+        # Quote the whole path+query as a single value so any embedded
+        # ``&`` / ``?`` / ``=`` characters survive the round-trip.
+        return RedirectResponse(url=f"/auth/login?next={quote(next_url, safe='')}", status_code=302)
+    return HTMLResponse(content=shell_html)
+
+
 def _build_floor_response(
     service: SeatService,
     floor_id: str,
     raw_as_of: str,
     http_exception: Any,
+    user: dict[str, str] | None,
 ) -> dict[str, Any]:
     """Pure builder for the ``/api/floors/{id}`` JSON body.
 
@@ -131,7 +175,8 @@ def _build_floor_response(
     else:
         as_of_value = today_iso_date(service._clock)
         explicit = False
-    seats = [_redact(a) for a in service.list_seats(floor=floor_id, as_of=as_of_value)]
+    role = role_from_user(user)
+    seats = [_redact(a) for a in service.list_seats(floor=floor_id, as_of=as_of_value, role=role)]
     return {
         "floor": _floor_to_dict(floor, office_id),
         "svg_url": f"/svgs/{floor.svg.name}",
@@ -139,6 +184,7 @@ def _build_floor_response(
         # Echo the date back only when the caller asked for one — this is
         # what the frontend uses to decide whether to surface the banner.
         "as_of": as_of_value if explicit else None,
+        "user": user,
     }
 
 
@@ -167,27 +213,54 @@ def _floor_to_dict(floor: Floor, office_id: str) -> dict[str, Any]:
 
 
 def _redact(a: Assignment) -> dict[str, Any]:
-    """Server-side redaction for ``hidden=TRUE`` rows.
+    """Stage 7 — surface mapping for an Assignment.
 
-    The frontend never sees a private email or note. Notes are scrubbed
-    whenever ``hidden=True`` regardless of whether ``employee_email`` is
-    populated — a privately-flagged seat that happens to be vacant must
-    not leak the operator's notes either. Stage 7 will pass a role
-    argument that lifts this for editors / planning users.
+    Role-aware redaction is now done in :class:`SeatService` (it sets
+    ``redacted=True`` for hidden rows when the caller's role is
+    ``viewer``). This helper just maps that view-time state to the API
+    JSON shape: redacted hidden rows render with the ``"(private)"``
+    placeholder; everything else passes through.
+
+    A non-redacted hidden row exists when the caller is editor/planning
+    (full details) or when the row is hidden but vacant (Qodo Q4 from
+    Stage 5 — notes are still scrubbed for all callers since the row's
+    privacy intent stands).
     """
+    if a.redacted:
+        return {
+            "seat_id": a.seat_id,
+            "floor": a.floor,
+            "employee_email": _PRIVATE_PLACEHOLDER,
+            "last_updated": a.last_updated,
+            "hidden": True,
+            "redacted": True,
+            "notes": "",
+            "effective_from": a.effective_from or None,
+            "effective_until": a.effective_until or None,
+        }
     if a.hidden:
-        email_out: str | None = _PRIVATE_PLACEHOLDER if a.employee_email else None
-        notes_out = ""
-    else:
-        email_out = a.employee_email or None
-        notes_out = a.notes
+        # Editor/planning view (or hidden-but-vacant seat). Email passes
+        # through; notes still scrubbed when there's no occupant so a
+        # privately-flagged empty seat doesn't leak the operator's notes.
+        return {
+            "seat_id": a.seat_id,
+            "floor": a.floor,
+            "employee_email": a.employee_email or None,
+            "last_updated": a.last_updated,
+            "hidden": True,
+            "redacted": False,
+            "notes": a.notes if a.employee_email else "",
+            "effective_from": a.effective_from or None,
+            "effective_until": a.effective_until or None,
+        }
     return {
         "seat_id": a.seat_id,
         "floor": a.floor,
-        "employee_email": email_out,
+        "employee_email": a.employee_email or None,
         "last_updated": a.last_updated,
-        "hidden": a.hidden,
-        "notes": notes_out,
+        "hidden": False,
+        "redacted": False,
+        "notes": a.notes,
         "effective_from": a.effective_from or None,
         "effective_until": a.effective_until or None,
     }

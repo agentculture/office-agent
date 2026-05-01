@@ -268,6 +268,64 @@ def test_invalid_calendar_date_rejected(data_dir: Path) -> None:
     assert "2026-02-30" in text
 
 
+def test_editor_caller_sees_hidden_seat_in_full(data_dir: Path) -> None:
+    """Stage 7: an editor-role caller via the roles map sees the email."""
+    from office_cli._roles import RolesConfig
+
+    service = _service_with_active(data_dir, "exec@example.com", "alice@example.com")
+    service.assign("5-T-04", "exec@example.com", hidden=True)
+    roles = RolesConfig(editor=frozenset({"alice@example.com"}))
+    app = build_app(service, app=FakeSlackApp(), roles=roles)
+    # ``alice@example.com`` is the caller (resolved via users.info on U999),
+    # asking about the hidden seat.
+    client = FakeSlackClient(users={"U999": {"profile": {"email": "alice@example.com"}}})
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "exec@example.com", "user_id": "U999"},
+        client=client,
+    )
+    text = _block_text(_last_blocks(client))
+    # Editor caller — the hidden block path is bypassed; full occupancy details visible.
+    assert "exec@example.com" in text
+
+
+def test_viewer_caller_sees_private_for_mention(data_dir: Path) -> None:
+    """A non-editor caller asking about ``@user`` (a mention) sees ``occupied (private)``.
+
+    This is the issue-#11 acceptance shape: the caller types
+    ``/whereis @bob``, the handler resolves the mention to bob's email
+    via ``users.info``, then redacts in the response because the
+    caller's role is viewer. The block-level text uses the mention
+    (``<@U…>``) as the label — never bob's email.
+    """
+    from office_cli._roles import RolesConfig
+
+    service = _service_with_active(data_dir, "exec@example.com")
+    service.assign("5-T-04", "exec@example.com", hidden=True)
+    # Caller (U999 / bob) is NOT in the editor list → stays viewer.
+    # Target (U123 / exec) is the @-mention.
+    roles = RolesConfig(editor=frozenset({"hr@example.com"}))
+    app = build_app(service, app=FakeSlackApp(), roles=roles)
+    client = FakeSlackClient(
+        users={
+            "U999": {"profile": {"email": "bob@example.com"}},
+            "U123": {"profile": {"email": "exec@example.com"}},
+        }
+    )
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "<@U123|exec>", "user_id": "U999"},
+        client=client,
+    )
+    text = _block_text(_last_blocks(client))
+    assert "occupied (private)" in text
+    # The mention label was used in the response, not the resolved email.
+    assert "exec@example.com" not in text
+    assert "<@U123>" in text
+
+
 def test_trailing_date_filters_via_as_of(data_dir: Path) -> None:
     """Stage 6 — trailing ``YYYY-MM-DD`` token filters via the effective window."""
     service = _service_with_active(data_dir, "alice@example.com")

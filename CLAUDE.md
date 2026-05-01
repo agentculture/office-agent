@@ -39,12 +39,14 @@ office-agent/
 │   │   └── _commands/           # learn, explain, whoami, floors, seats, whereis
 │   ├── _config.py               # resolve_data_dir() / --data-dir / OFFICE_DATA_DIR
 │   ├── _dates.py                # parse_iso_date / today_iso_date / is_effective (Stage 6)
+│   ├── _roles.py                # RolesConfig / role_for_email / is_full_access (Stage 7)
 │   ├── offices/                 # offices.yaml loader + Office/Floor/Cluster/Room
 │   ├── floors/                  # SVG parse + ID contract + validator
 │   ├── seats/                   # AssignmentStore + Csv/Sheets stores + AuditLog + SeatService
 │   ├── people/                  # Employee + EmployeeDirectory (Stub + BambooHR backends)
 │   ├── slack/                   # `/whereis` Bolt app + Socket Mode runner (optional [slack] extra)
 │   ├── server/                  # FastAPI seat-map server + vanilla-JS frontend (optional [web] extra)
+│   │                            # Stage 7: SSO + role-aware redaction (optional [sso] extra)
 │   └── explain/                 # Markdown catalog for `office explain <path>`
 ├── data/offices.yaml            # office / floor / cluster topology
 ├── floors/                      # human-traced floor SVGs
@@ -61,7 +63,7 @@ office-agent/
 ```bash
 uv sync                           # install runtime + dev deps
 uv run pytest -n auto -v          # full suite, parallel
-uv run office --version           # 0.6.0
+uv run office --version           # 0.7.0
 uv run office learn               # agent affordance
 uv run office whoami              # auth probe stub
 uv run office floors validate floors/tlv-floor-5.svg
@@ -142,7 +144,7 @@ Lessons paid for in advance — don't relitigate without a reason:
 - **Audit log is append-only.** Seat changes never overwrite history; "who used to sit at 5-T-01?" must return chronological history.
 - **Multi-office from day one.** No hardcoded `tlv`. Adding a floor = drop SVG + add `data/offices.yaml` entry, no code change.
 - **Future-dated assignments**: the data model carries `effective_from` / `effective_until` and Stage 6 enforces them at the service layer. `office seats assign --from / --until`, `office whereis --as-of`, `office seats list --as-of`, `?asOf=YYYY-MM-DD` on the web map, and a trailing `YYYY-MM-DD` token on Slack `/whereis` all flow through the same window check. `effective_*` is stored as `YYYY-MM-DD` (date precision, no time); `last_updated` and audit timestamps stay full ISO-8601.
-- **`hidden=TRUE`** rows show as "occupied (private)" to viewers; full details only to the `editor` / `planning` roles.
+- **`hidden=TRUE`** rows show as "occupied (private)" to viewers; full details only to the `editor` / `planning` roles. Stage 7 enforces this end-to-end. Roles map lives in `data/offices.yaml` under `roles:`. The CLI is operator-only and unrestricted (`role=None` → no redaction). Web SSO is opt-in via `OIDC_*`/`SESSION_SECRET` env vars; when unset, the server runs in auth-disabled mode (local dev). Tests use `X-Test-Role: viewer|editor|planning` to drive role-aware behavior; this header is **only** honored when OIDC is disabled.
 - **Out of scope for v1**: hot-desking / desk booking, native mobile app, visitor/badge/sensor integration, in-app SVG editor.
 
 ## Picking up issue #1

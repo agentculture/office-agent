@@ -34,6 +34,19 @@ wheels = [
 ]
 
 [[package]]
+name = "authlib"
+version = "1.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "joserfc" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d9/82/4d0603f30c1b4629b1f091bb266b0d7986434891d6940a8c87f8098db24e/authlib-1.7.0.tar.gz", hash = "sha256:b3e326c9aa9cc3ea95fe7d89fd880722d3608da4d00e8a27e061e64b48d801d5", size = 175890, upload-time = "2026-04-18T11:00:28.559Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ca/48/c954218b2a250e23f178f10167c4173fecb5a75d2c206f0a67ba58006c26/authlib-1.7.0-py2.py3-none-any.whl", hash = "sha256:e36817afb02f6f0b6bf55f150782499ddd6ddf44b402bb055d3263cc65ac9ae0", size = 258779, upload-time = "2026-04-18T11:00:26.64Z" },
+]
+
+[[package]]
 name = "bandit"
 version = "1.9.4"
 source = { registry = "https://pypi.org/simple" }
@@ -520,6 +533,27 @@ wheels = [
 ]
 
 [[package]]
+name = "itsdangerous"
+version = "2.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/9c/cb/8ac0172223afbccb63986cc25049b154ecfb5e85932587206f42317be31d/itsdangerous-2.2.0.tar.gz", hash = "sha256:e0050c0b7da1eea53ffaf149c0cfbb5c6e2e2b69c4bef22c81fa6eb73e5f6173", size = 54410, upload-time = "2024-04-16T21:28:15.614Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/04/96/92447566d16df59b2a776c0fb82dbc4d9e07cd95062562af01e408583fc4/itsdangerous-2.2.0-py3-none-any.whl", hash = "sha256:c6242fc49e35958c8b15141343aa660db5fc54d4f13a1db01a3f5891b98700ef", size = 16234, upload-time = "2024-04-16T21:28:14.499Z" },
+]
+
+[[package]]
+name = "joserfc"
+version = "1.6.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/de/c6/de8fdbdfa75c8ca04fead38a82d573df8a82906e984c349d58665f459558/joserfc-1.6.4.tar.gz", hash = "sha256:34ce5f499bfcc5e9ad4cc75077f9278ab3227b71da9aaf28f9ab705f8a560d3c", size = 231866, upload-time = "2026-04-13T13:15:40.632Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b6/f7/210b27752e972edb36d239315b08d3eb6b14824cc4a590da2337d195260b/joserfc-1.6.4-py3-none-any.whl", hash = "sha256:3e4a22b509b41908989237a045e25c8308d5fd47ab96bdae2dd8057c6451003a", size = 70464, upload-time = "2026-04-13T13:15:39.259Z" },
+]
+
+[[package]]
 name = "markdown-it-py"
 version = "4.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -569,7 +603,7 @@ wheels = [
 
 [[package]]
 name = "office-cli"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "." }
 dependencies = [
     { name = "pyyaml" },
@@ -586,6 +620,11 @@ slack = [
     { name = "slack-bolt" },
     { name = "slack-sdk" },
 ]
+sso = [
+    { name = "authlib" },
+    { name = "httpx" },
+    { name = "itsdangerous" },
+]
 web = [
     { name = "fastapi" },
     { name = "uvicorn" },
@@ -593,12 +632,14 @@ web = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "authlib" },
     { name = "bandit" },
     { name = "black" },
     { name = "fastapi" },
     { name = "flake8" },
     { name = "httpx" },
     { name = "isort" },
+    { name = "itsdangerous" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-xdist" },
@@ -606,24 +647,29 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "authlib", marker = "extra == 'sso'", specifier = ">=1.3" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.110" },
     { name = "gspread", marker = "extra == 'sheets'", specifier = ">=6.0" },
+    { name = "httpx", marker = "extra == 'sso'", specifier = ">=0.27" },
+    { name = "itsdangerous", marker = "extra == 'sso'", specifier = ">=2.1" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "requests", marker = "extra == 'bamboohr'", specifier = ">=2.31" },
     { name = "slack-bolt", marker = "extra == 'slack'", specifier = ">=1.18" },
     { name = "slack-sdk", marker = "extra == 'slack'", specifier = ">=3.27" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.30" },
 ]
-provides-extras = ["sheets", "bamboohr", "slack", "web"]
+provides-extras = ["sheets", "bamboohr", "slack", "web", "sso"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "authlib", specifier = ">=1.3" },
     { name = "bandit", specifier = ">=1.7.5" },
     { name = "black", specifier = ">=23.7.0" },
     { name = "fastapi", specifier = ">=0.110" },
     { name = "flake8", specifier = ">=6.1" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "isort", specifier = ">=5.12.0" },
+    { name = "itsdangerous", specifier = ">=2.1" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-cov", specifier = ">=4.1" },
     { name = "pytest-xdist", specifier = ">=3.0" },
