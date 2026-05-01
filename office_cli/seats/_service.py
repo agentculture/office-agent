@@ -62,20 +62,13 @@ class SeatService:
         existing = {a.seat_id: a for a in self.store.list()}
         out: list[Assignment] = []
         for seat_id, floor_id in sorted(self._seat_to_floor.items()):
-            if floor and floor_id != floor:
+            if not _seat_matches_scope(seat_id, floor_id, floor, cluster):
                 continue
-            if cluster and seat_id.split("-")[1:2] != [cluster]:
-                continue
-            a = existing.get(
-                seat_id,
-                Assignment(seat_id=seat_id, floor=floor_id),
-            )
+            a = existing.get(seat_id, Assignment(seat_id=seat_id, floor=floor_id))
             if as_of is not None and not is_effective(a, as_of):
                 a = Assignment(seat_id=seat_id, floor=floor_id)
             a = self._apply_autovacate(a)
-            if only_vacant and not a.is_vacant:
-                continue
-            if only_occupied and a.is_vacant:
+            if not _row_matches_occupancy(a, only_vacant, only_occupied):
                 continue
             out.append(a)
         return out
@@ -307,3 +300,26 @@ def _build_seat_index(
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _seat_matches_scope(
+    seat_id: str,
+    floor_id: str,
+    floor: str | None,
+    cluster: str | None,
+) -> bool:
+    """Return True iff the seat passes the ``--floor`` / ``--cluster`` filters."""
+    if floor and floor_id != floor:
+        return False
+    if cluster and seat_id.split("-")[1:2] != [cluster]:
+        return False
+    return True
+
+
+def _row_matches_occupancy(a: Assignment, only_vacant: bool, only_occupied: bool) -> bool:
+    """Return True iff the row passes the ``--vacant`` / ``--occupied`` filters."""
+    if only_vacant and not a.is_vacant:
+        return False
+    if only_occupied and a.is_vacant:
+        return False
+    return True

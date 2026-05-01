@@ -72,7 +72,8 @@ def test_whereis_filters_by_as_of(data_dir: Path) -> None:
 def test_list_seats_filters_by_as_of(data_dir: Path) -> None:
     s = _service(data_dir)
     s.assign("5-T-01", "alice@example.com", effective_from="2026-07-01")
-    s.assign("5-T-02", "bob@example.com")  # default = today
+    # Bob: no explicit window, so effective_from defaults to today.
+    s.assign("5-T-02", "bob@example.com")
 
     by_id_pre = {row.seat_id: row for row in s.list_seats(as_of="2026-06-30")}
     # Alice's future-dated row is hidden as vacant.
