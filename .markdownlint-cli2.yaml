@@ -17,3 +17,7 @@ config:
 ignores:
   - "node_modules/**"
   - ".local/**"
+  # The virtualenv tree pulls in licence Markdown from third-party deps
+  # whenever Stage 5+'s [web] extras are installed locally; we never lint
+  # those.
+  - ".venv/**"

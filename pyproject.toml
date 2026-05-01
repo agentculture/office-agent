@@ -1,6 +1,6 @@
 [project]
 name = "office-cli"
-version = "0.4.0"
+version = "0.5.0"
 description = "Office — CLI to manage sittings and meeting rooms in office maps."
 readme = "README.md"
 license = "MIT"
@@ -21,6 +21,10 @@ dependencies = [
 sheets = ["gspread>=6.0"]
 bamboohr = ["requests>=2.31"]
 slack = ["slack-bolt>=1.18", "slack-sdk>=3.27"]
+web = [
+    "fastapi>=0.110",
+    "uvicorn>=0.30",
+]
 
 [project.urls]
 Homepage = "https://github.com/agentculture/office-agent"
@@ -45,6 +49,11 @@ dev = [
     "flake8>=6.1",
     "isort>=5.12.0",
     "black>=23.7.0",
+    # Test-only deps for the web stage. fastapi.testclient depends on
+    # httpx; pulling them into dev so CI can exercise the [web] surface
+    # without installing the optional extra.
+    "fastapi>=0.110",
+    "httpx>=0.28",
 ]
 
 [tool.coverage.run]

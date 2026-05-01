@@ -7,6 +7,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-01
+
+### Added
+
+- v1 seating Stage 5 — search-first web map
+  ([#9](https://github.com/agentculture/office-agent/issues/9)). New
+  `office_cli.server` subpackage with a FastAPI app exposing
+  `/api/offices`, `/api/floors/{id}`, the static SVGs, and the SPA
+  shell at `/offices/{id}/floors/{floor_id}`.
+- New CLI verb `office serve [--host H] [--port N] [--data-dir D]`
+  blocks on `uvicorn.run`. Reads from the same `build_service` factory
+  as the CLI / Slack, so Stages 2 / 3 backends flow through.
+- Vanilla-JS frontend (no build step) under
+  `office_cli/server/static/`: `index.html` shell, `app.js` ES module
+  (fetch + render + search + URL state), `app.css` (responsive
+  layout), vendored Fuse.js for fuzzy search.
+- New optional extra: `pip install office-cli[web]` pulls
+  `fastapi>=0.110` and `uvicorn>=0.30`. The package still imports
+  cleanly without it.
+- Hidden-seat **server-side redaction**: `hidden=TRUE` rows render
+  as `employee_email = "(private)"` and `notes = ""` in the JSON the
+  browser sees, so the frontend cannot accidentally leak private
+  details. Stage 7 will lift this for `editor` / `planning` roles.
+- Auto-vacate (Stage 3) and the storage backends (Stage 2) flow
+  through unchanged — the server reads through `SeatService` exactly
+  like the CLI does.
+- `?asOf=YYYY-MM-DD` URL parameter is parsed and surfaces a banner
+  ("as-of dates are not yet enforced — Stage 6"). Service-layer
+  filtering lands separately.
+
 ## [0.4.0] - 2026-05-01
 
 ### Added
@@ -129,7 +159,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   preserving the SVG ID contract and architectural guardrails for the v1
   seating system (issue #1).
 
-[Unreleased]: https://github.com/agentculture/office-agent/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/agentculture/office-agent/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/agentculture/office-agent/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/agentculture/office-agent/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/agentculture/office-agent/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/agentculture/office-agent/compare/v0.1.0...v0.2.0
