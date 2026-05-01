@@ -39,6 +39,10 @@ class BambooHRDirectory:
         self._clock = clock or time.monotonic
         self._cache: dict[str, Employee] = {}
         self._cache_at: float = 0.0
+        # Distinct from `_cache_at`: tracks the *last attempt* (success or
+        # fail) so a sustained outage does not retry on every per-seat
+        # `is_active` call inside `SeatService.list_seats`.
+        self._last_attempt_at: float = 0.0
         self._has_cache = False
 
     # -- EmployeeDirectory ----------------------------------------------
@@ -55,15 +59,20 @@ class BambooHRDirectory:
     # -- Helpers ---------------------------------------------------------
 
     def _refresh_if_stale(self) -> None:
-        if self._has_cache and (self._clock() - self._cache_at) < self._ttl:
+        now = self._clock()
+        # Rate-limit *attempts* (not just successes) so a stale cache during
+        # an outage does not trigger one fetch per seat in `list_seats`.
+        if self._has_cache and (now - self._last_attempt_at) < self._ttl:
             return
         try:
             employees = self._client.fetch_directory()
         except Exception as err:  # noqa: BLE001 — fail-open by design
+            self._last_attempt_at = now
             if self._has_cache:
+                age = now - self._cache_at
                 emit_diagnostic(
                     f"BambooHR fetch failed ({err.__class__.__name__}: {err}); "
-                    f"serving cached directory from {self._cache_at:.0f}s ago"
+                    f"serving cached directory from {age:.0f}s ago"
                 )
                 return
             raise OfficeError(
@@ -72,10 +81,12 @@ class BambooHRDirectory:
                 remediation=("verify BAMBOOHR_API_TOKEN / BAMBOOHR_SUBDOMAIN and retry"),
             ) from err
         self._cache = {e.email: e for e in employees if e.email}
-        self._cache_at = self._clock()
+        self._cache_at = now
+        self._last_attempt_at = now
         self._has_cache = True
 
     def invalidate(self) -> None:
         self._cache = {}
         self._cache_at = 0.0
+        self._last_attempt_at = 0.0
         self._has_cache = False

@@ -102,6 +102,46 @@ def test_failopen_serves_stale_cache(
     assert "serving cached directory" in err
 
 
+def test_failed_refresh_rate_limits_within_ttl(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Copilot/Qodo: a sustained outage must not refetch on every is_active call.
+
+    `SeatService.list_seats` calls `is_active` per seat, so a stale cache
+    plus a failing BambooHR would otherwise issue N requests + N stderr
+    diagnostics for an N-seat office.
+    """
+    client = FakeBambooHRClient([_emp("alice@x")])
+    now = [0.0]
+    directory = BambooHRDirectory(client, cache_ttl_seconds=10, clock=lambda: now[0])
+    directory.is_active("alice@x")  # seed cache
+    capsys.readouterr()
+    assert client.call_count == 1
+
+    # Cache is now stale; BambooHR is down.
+    now[0] = 100.0
+    client.next_error = ConnectionError("BambooHR down")
+    directory.is_active("alice@x")
+    err1 = capsys.readouterr().err
+    assert "BambooHR fetch failed" in err1
+    assert client.call_count == 2
+
+    # Two more is_active calls within the TTL window must not refetch and
+    # must not re-emit the diagnostic.
+    client.next_error = ConnectionError("still down")
+    directory.is_active("alice@x")
+    directory.is_active("bob@x")
+    assert client.call_count == 2  # rate-limited
+    assert capsys.readouterr().err == ""
+
+    # After another TTL window elapses, we try again exactly once.
+    now[0] = 220.0
+    client.next_error = ConnectionError("still down")
+    directory.is_active("alice@x")
+    directory.is_active("bob@x")
+    assert client.call_count == 3
+
+
 def test_failclosed_when_no_cache_yet() -> None:
     """First fetch failure must surface as OfficeError; we have nothing to serve."""
     client = FakeBambooHRClient()

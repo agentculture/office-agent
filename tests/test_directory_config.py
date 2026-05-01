@@ -82,6 +82,46 @@ def test_unknown_directory_type_rejected(tmp_path: Path, monkeypatch: pytest.Mon
     assert "unknown directory type" in exc.value.message
 
 
+def test_ttl_capped_at_five_minutes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Qodo Q1: cache_ttl_seconds > 300 violates the v1 5-minute cap."""
+    _write(
+        tmp_path,
+        """
+directory:
+  type: bamboohr
+  bamboohr:
+    subdomain: tipalti
+    cache_ttl_seconds: 600
+""".lstrip(),
+    )
+    monkeypatch.setenv("BAMBOOHR_API_TOKEN", "tok")
+    with pytest.raises(OfficeError) as exc:
+        resolve_directory(tmp_path)
+    assert "must not exceed 300" in exc.value.message
+    assert "5 minutes" in exc.value.remediation
+
+
+def test_directory_errors_reference_directory_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Copilot #2/#3: error messages on directory config must say
+    'directory.bamboohr.*', not 'storage.*'."""
+    _write(
+        tmp_path,
+        """
+directory:
+  type: bamboohr
+  bamboohr:
+    subdomain: tipalti
+    cache_ttl_seconds: not-a-number
+""".lstrip(),
+    )
+    monkeypatch.setenv("BAMBOOHR_API_TOKEN", "tok")
+    with pytest.raises(OfficeError) as exc:
+        resolve_directory(tmp_path)
+    assert "directory.bamboohr.cache_ttl_seconds" in exc.value.message
+
+
 def test_non_dict_bamboohr_block_rejected(tmp_path: Path) -> None:
     _write(tmp_path, "directory:\n  type: bamboohr\n  bamboohr: nope\n")
     with pytest.raises(OfficeError) as exc:

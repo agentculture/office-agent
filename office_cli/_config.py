@@ -36,6 +36,7 @@ import yaml
 from office_cli.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, OfficeError
 
 _SHAPE_HINT = "see docs/architecture.md for the expected shape"
+_BAMBOOHR_TTL_MAX_SECONDS = 300
 
 
 def resolve_data_dir(args: argparse.Namespace | None = None) -> Path:
@@ -91,7 +92,9 @@ def resolve_storage(data_dir: Path) -> StorageConfig:
     """
     yaml_cfg = _read_storage_block(data_dir)
     store_type = (
-        (os.environ.get("OFFICE_STORE") or _str_field(yaml_cfg, "type") or "csv").strip().lower()
+        (os.environ.get("OFFICE_STORE") or _str_field(yaml_cfg, "type", prefix="storage") or "csv")
+        .strip()
+        .lower()
     )
 
     if store_type == "csv":
@@ -114,9 +117,13 @@ def resolve_storage(data_dir: Path) -> StorageConfig:
             remediation=_SHAPE_HINT,
         )
     spreadsheet_id = (
-        os.environ.get("OFFICE_SHEETS_ID") or _str_field(sheets_cfg, "spreadsheet_id") or ""
+        os.environ.get("OFFICE_SHEETS_ID")
+        or _str_field(sheets_cfg, "spreadsheet_id", prefix="storage.sheets")
+        or ""
     ).strip()
-    sa_field = os.environ.get("OFFICE_SHEETS_SA") or _str_field(sheets_cfg, "service_account")
+    sa_field = os.environ.get("OFFICE_SHEETS_SA") or _str_field(
+        sheets_cfg, "service_account", prefix="storage.sheets"
+    )
     if not spreadsheet_id:
         raise OfficeError(
             code=EXIT_ENV_ERROR,
@@ -132,7 +139,7 @@ def resolve_storage(data_dir: Path) -> StorageConfig:
     sa_path = Path(sa_field).expanduser()
     if not sa_path.is_absolute():
         sa_path = (data_dir / sa_path).resolve()
-    ttl = _int_field(sheets_cfg, "cache_ttl_seconds", 300)
+    ttl = _int_field(sheets_cfg, "cache_ttl_seconds", 300, prefix="storage.sheets")
     return StorageConfig(
         type="sheets",
         spreadsheet_id=spreadsheet_id,
@@ -141,11 +148,13 @@ def resolve_storage(data_dir: Path) -> StorageConfig:
     )
 
 
-def _str_field(d: dict, key: str) -> str:
+def _str_field(d: dict, key: str, *, prefix: str = "storage") -> str:
     """Read ``d[key]`` as a string. ``None`` → empty; non-string → coerced.
 
     Returns "" for missing keys. Raises :class:`OfficeError` only if the
     value is structurally wrong (a list/dict where a scalar is expected).
+    ``prefix`` is the YAML path used in error messages (e.g.
+    ``"storage.sheets"`` or ``"directory.bamboohr"``).
     """
     value = d.get(key)
     if value is None:
@@ -153,33 +162,34 @@ def _str_field(d: dict, key: str) -> str:
     if isinstance(value, (dict, list)):
         raise OfficeError(
             code=EXIT_USER_ERROR,
-            message=f"storage.{key} must be a scalar, got {type(value).__name__}",
+            message=f"{prefix}.{key} must be a scalar, got {type(value).__name__}",
             remediation=_SHAPE_HINT,
         )
     return str(value)
 
 
-def _int_field(d: dict, key: str, default: int) -> int:
+def _int_field(d: dict, key: str, default: int, *, prefix: str = "storage") -> int:
+    """Like :func:`_str_field` but coerces to ``int`` and rejects negatives."""
     value = d.get(key, default)
     if isinstance(value, bool) or not isinstance(value, (int, str)):
         raise OfficeError(
             code=EXIT_USER_ERROR,
-            message=f"storage.{key} must be an integer, got {type(value).__name__}",
-            remediation=f"set storage.{key} to a non-negative integer (seconds)",
+            message=f"{prefix}.{key} must be an integer, got {type(value).__name__}",
+            remediation=f"set {prefix}.{key} to a non-negative integer (seconds)",
         )
     try:
         ttl = int(value)
     except ValueError as err:
         raise OfficeError(
             code=EXIT_USER_ERROR,
-            message=f"storage.{key} must be an integer; got {value!r}",
-            remediation=f"set storage.{key} to a non-negative integer (seconds)",
+            message=f"{prefix}.{key} must be an integer; got {value!r}",
+            remediation=f"set {prefix}.{key} to a non-negative integer (seconds)",
         ) from err
     if ttl < 0:
         raise OfficeError(
             code=EXIT_USER_ERROR,
-            message=f"storage.{key} must be non-negative; got {ttl}",
-            remediation=f"set storage.{key} to a non-negative integer (seconds)",
+            message=f"{prefix}.{key} must be non-negative; got {ttl}",
+            remediation=f"set {prefix}.{key} to a non-negative integer (seconds)",
         )
     return ttl
 
@@ -232,7 +242,11 @@ def resolve_directory(data_dir: Path) -> DirectoryConfig:
     """
     yaml_cfg = _read_top_level_block(data_dir, "directory")
     dir_type = (
-        (os.environ.get("OFFICE_DIRECTORY") or _str_field(yaml_cfg, "type") or "stub")
+        (
+            os.environ.get("OFFICE_DIRECTORY")
+            or _str_field(yaml_cfg, "type", prefix="directory")
+            or "stub"
+        )
         .strip()
         .lower()
     )
@@ -259,7 +273,9 @@ def resolve_directory(data_dir: Path) -> DirectoryConfig:
             remediation=_SHAPE_HINT,
         )
     subdomain = (
-        os.environ.get("BAMBOOHR_SUBDOMAIN") or _str_field(bamboo_cfg, "subdomain") or ""
+        os.environ.get("BAMBOOHR_SUBDOMAIN")
+        or _str_field(bamboo_cfg, "subdomain", prefix="directory.bamboohr")
+        or ""
     ).strip()
     api_token = (os.environ.get("BAMBOOHR_API_TOKEN") or "").strip()
     if not subdomain:
@@ -274,7 +290,19 @@ def resolve_directory(data_dir: Path) -> DirectoryConfig:
             message="directory.type=bamboohr requires an API token",
             remediation=("set BAMBOOHR_API_TOKEN (env-only — do not commit the token to YAML)"),
         )
-    ttl = _int_field(bamboo_cfg, "cache_ttl_seconds", 300)
+    ttl = _int_field(bamboo_cfg, "cache_ttl_seconds", 300, prefix="directory.bamboohr")
+    if ttl > _BAMBOOHR_TTL_MAX_SECONDS:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=(
+                f"directory.bamboohr.cache_ttl_seconds must not exceed "
+                f"{_BAMBOOHR_TTL_MAX_SECONDS}; got {ttl}"
+            ),
+            remediation=(
+                "the v1 spec caps the BambooHR cache at 5 minutes "
+                f"({_BAMBOOHR_TTL_MAX_SECONDS}s) so offboarding propagates promptly"
+            ),
+        )
     return DirectoryConfig(
         type="bamboohr",
         subdomain=subdomain,
