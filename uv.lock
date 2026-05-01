@@ -485,13 +485,16 @@ wheels = [
 
 [[package]]
 name = "office-cli"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "pyyaml" },
 ]
 
 [package.optional-dependencies]
+bamboohr = [
+    { name = "requests" },
+]
 sheets = [
     { name = "gspread" },
 ]
@@ -511,8 +514,9 @@ dev = [
 requires-dist = [
     { name = "gspread", marker = "extra == 'sheets'", specifier = ">=6.0" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "requests", marker = "extra == 'bamboohr'", specifier = ">=2.31" },
 ]
-provides-extras = ["sheets"]
+provides-extras = ["sheets", "bamboohr"]
 
 [package.metadata.requires-dev]
 dev = [

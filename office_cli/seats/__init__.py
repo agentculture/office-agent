@@ -15,13 +15,16 @@ from __future__ import annotations
 from pathlib import Path
 
 from office_cli._config import (
+    DirectoryConfig,
     StorageConfig,
     assignments_csv,
     audit_log_csv,
+    resolve_directory,
     resolve_storage,
 )
 from office_cli.floors import FloorSvg, parse_svg
 from office_cli.offices import load_offices
+from office_cli.people import EmployeeDirectory, StubDirectory
 from office_cli.seats._audit import AuditLog, CsvAuditLog
 from office_cli.seats._csv_store import CsvStore
 from office_cli.seats._models import Assignment, AuditEntry
@@ -35,7 +38,9 @@ __all__ = [
     "AuditLog",
     "CsvAuditLog",
     "CsvStore",
+    "DirectoryConfig",
     "SeatService",
+    "StorageConfig",
     "build_service",
 ]
 
@@ -45,7 +50,9 @@ def build_service(data_dir: Path, *, actor: str = "cli") -> SeatService:
 
     Reads ``data/offices.yaml``, parses each declared floor SVG, and picks
     the assignment store + audit log per the resolved
-    :class:`StorageConfig` (CSV by default, Sheets when configured).
+    :class:`StorageConfig` (CSV by default, Sheets when configured), plus
+    the people directory per the resolved :class:`DirectoryConfig` (stub
+    by default, BambooHR when configured).
     """
     offices = load_offices(data_dir)
     floor_svgs: dict[str, FloorSvg] = {}
@@ -54,13 +61,31 @@ def build_service(data_dir: Path, *, actor: str = "cli") -> SeatService:
             if floor.svg.is_file():
                 floor_svgs[floor_id] = parse_svg(floor.svg)
     store, audit = _build_backends(data_dir, resolve_storage(data_dir))
+    directory = _build_directory(resolve_directory(data_dir))
     return SeatService(
         offices=offices,
         floor_svgs=floor_svgs,
         store=store,
         audit=audit,
         actor=actor,
+        directory=directory,
     )
+
+
+def _build_directory(cfg: DirectoryConfig) -> EmployeeDirectory:
+    if cfg.type == "stub":
+        return StubDirectory()
+    # Lazy import — requests is optional.
+    from office_cli.people.bamboohr import (
+        BambooHRDirectory,
+        RequestsBambooHRClient,
+    )
+
+    client = RequestsBambooHRClient(
+        subdomain=cfg.subdomain,
+        api_token=cfg.api_token,
+    )
+    return BambooHRDirectory(client, cache_ttl_seconds=cfg.cache_ttl_seconds)
 
 
 def _build_backends(data_dir: Path, cfg: StorageConfig):

@@ -1,5 +1,6 @@
 """Resolve where the office data (offices.yaml, floors/, seats/) lives,
-plus the storage backend (CSV vs Sheets) the seat service should use.
+plus the storage backend (CSV vs Sheets) and people directory (Stub vs
+BambooHR) the seat service should use.
 
 Data-dir resolution order:
 
@@ -12,6 +13,15 @@ Storage selection order (last wins):
 1. ``storage:`` block in ``data/offices.yaml`` (``type: csv`` | ``sheets``);
 2. ``OFFICE_STORE`` env var (``csv`` | ``sheets``);
 3. CLI overrides via ``OFFICE_SHEETS_ID`` / ``OFFICE_SHEETS_SA``.
+
+Directory selection order (last wins):
+
+1. ``directory:`` block in ``data/offices.yaml`` (``type: stub`` | ``bamboohr``);
+2. ``OFFICE_DIRECTORY`` env var (``stub`` | ``bamboohr``);
+3. ``BAMBOOHR_API_TOKEN`` / ``BAMBOOHR_SUBDOMAIN`` env overrides.
+
+The API token is intentionally **env-only**; the YAML block carries the
+subdomain and TTL but never the token (so YAML can be checked in).
 """
 
 from __future__ import annotations
@@ -174,6 +184,16 @@ def _int_field(d: dict, key: str, default: int) -> int:
 
 def _read_storage_block(data_dir: Path) -> dict:
     """Return the ``storage:`` mapping from offices.yaml, or empty dict."""
+    return _read_top_level_block(data_dir, "storage")
+
+
+def _read_top_level_block(data_dir: Path, key: str) -> dict:
+    """Return the named top-level mapping from offices.yaml, or empty dict.
+
+    Used for the ``storage:`` and ``directory:`` blocks. Malformed YAML
+    is swallowed here; ``office_cli.offices.load_offices`` is the
+    authoritative parser and raises on it.
+    """
     yaml_path = data_dir / "data" / "offices.yaml"
     if not yaml_path.is_file():
         return {}
@@ -181,10 +201,81 @@ def _read_storage_block(data_dir: Path) -> dict:
         try:
             raw = yaml.safe_load(f) or {}
         except yaml.YAMLError:
-            # offices.py raises on malformed YAML; here we just decline to
-            # apply storage config and let the rest of the loader complain.
             return {}
-    storage = raw.get("storage") or {}
-    if not isinstance(storage, dict):
+    block = raw.get(key) or {}
+    if not isinstance(block, dict):
         return {}
-    return storage
+    return block
+
+
+@dataclass(frozen=True)
+class DirectoryConfig:
+    """Resolved people-directory backend for the seat service."""
+
+    type: str  # "stub" | "bamboohr"
+    subdomain: str = ""
+    api_token: str = ""
+    cache_ttl_seconds: int = 300
+
+
+def resolve_directory(data_dir: Path) -> DirectoryConfig:
+    """Pick the directory backend from offices.yaml + env overrides.
+
+    Defaults to ``stub`` (the trust-the-email no-op directory). BambooHR
+    requires both a subdomain and an API token; we error early so
+    operators get a clear hint instead of an opaque HTTP error.
+
+    The API token is intentionally env-only: ``BAMBOOHR_API_TOKEN`` is
+    a secret and must not be committed in ``data/offices.yaml``.
+    """
+    yaml_cfg = _read_top_level_block(data_dir, "directory")
+    dir_type = (
+        (os.environ.get("OFFICE_DIRECTORY") or _str_field(yaml_cfg, "type") or "stub")
+        .strip()
+        .lower()
+    )
+
+    if dir_type == "stub":
+        return DirectoryConfig(type="stub")
+
+    if dir_type != "bamboohr":
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"unknown directory type: {dir_type!r}",
+            remediation=(
+                "set directory.type to 'stub' or 'bamboohr' in offices.yaml or OFFICE_DIRECTORY"
+            ),
+        )
+
+    bamboo_cfg = yaml_cfg.get("bamboohr")
+    if bamboo_cfg is None:
+        bamboo_cfg = {}
+    if not isinstance(bamboo_cfg, dict):
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message="directory.bamboohr must be a mapping in offices.yaml",
+            remediation="see docs/architecture.md for the expected shape",
+        )
+    subdomain = (
+        os.environ.get("BAMBOOHR_SUBDOMAIN") or _str_field(bamboo_cfg, "subdomain") or ""
+    ).strip()
+    api_token = (os.environ.get("BAMBOOHR_API_TOKEN") or "").strip()
+    if not subdomain:
+        raise OfficeError(
+            code=EXIT_ENV_ERROR,
+            message="directory.type=bamboohr requires a subdomain",
+            remediation="set BAMBOOHR_SUBDOMAIN or directory.bamboohr.subdomain",
+        )
+    if not api_token:
+        raise OfficeError(
+            code=EXIT_ENV_ERROR,
+            message="directory.type=bamboohr requires an API token",
+            remediation=("set BAMBOOHR_API_TOKEN (env-only — do not commit the token to YAML)"),
+        )
+    ttl = _int_field(bamboo_cfg, "cache_ttl_seconds", 300)
+    return DirectoryConfig(
+        type="bamboohr",
+        subdomain=subdomain,
+        api_token=api_token,
+        cache_ttl_seconds=ttl,
+    )

@@ -5,17 +5,23 @@ Invariants:
 * a seat must exist in some floor's SVG before it can be assigned;
 * an employee has at most one seat globally — re-assigning an email that
   already holds a seat is rejected with a hint to use ``move``;
-* every mutation appends to the audit log.
+* every mutation appends to the audit log;
+* seats whose stored email is no longer active in the directory render
+  as **vacant** — the killer auto-vacate feature from issue #1. The
+  underlying row in the assignment store is *not* mutated; the filter
+  is applied at view time.
 """
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import datetime, timezone
 from typing import Iterable
 
 from office_cli.cli._errors import EXIT_USER_ERROR, OfficeError
 from office_cli.floors import FloorSvg
 from office_cli.offices import Office
+from office_cli.people import EmployeeDirectory, StubDirectory
 from office_cli.seats._audit import AuditLog
 from office_cli.seats._models import Assignment, AuditEntry
 from office_cli.seats._store import AssignmentStore
@@ -30,6 +36,7 @@ class SeatService:
         audit: AuditLog,
         actor: str = "cli",
         clock: "callable[[], str] | None" = None,  # type: ignore[name-defined]
+        directory: EmployeeDirectory | None = None,
     ) -> None:
         self.offices = offices
         self.floor_svgs = floor_svgs
@@ -37,6 +44,7 @@ class SeatService:
         self.audit = audit
         self.actor = actor
         self._clock = clock or _utcnow_iso
+        self.directory: EmployeeDirectory = directory or StubDirectory()
         self._seat_to_floor = _build_seat_index(offices, floor_svgs)
 
     # -- Lookups ---------------------------------------------------------
@@ -60,6 +68,7 @@ class SeatService:
                 seat_id,
                 Assignment(seat_id=seat_id, floor=floor_id),
             )
+            a = self._apply_autovacate(a)
             if only_vacant and not a.is_vacant:
                 continue
             if only_occupied and a.is_vacant:
@@ -68,7 +77,23 @@ class SeatService:
         return out
 
     def whereis(self, email: str) -> Assignment | None:
+        if not self.directory.is_active(email):
+            return None
         return self.store.by_email(email)
+
+    def _apply_autovacate(self, a: Assignment) -> Assignment:
+        """Return ``a`` with ``employee_email`` cleared if the employee is
+        no longer active in the directory.
+
+        The assignment-store row stays unchanged; this is a view-time
+        filter. ``hidden`` is also reset since "occupied (private)" no
+        longer applies once the seat is rendered as vacant.
+        """
+        if not a.employee_email:
+            return a
+        if self.directory.is_active(a.employee_email):
+            return a
+        return dataclasses.replace(a, employee_email="", hidden=False)
 
     def history(self, seat_id: str) -> list[AuditEntry]:
         self._require_seat(seat_id)

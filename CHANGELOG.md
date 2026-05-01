@@ -7,6 +7,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-01
+
+### Added
+
+- v1 seating Stage 3 — BambooHR-backed `EmployeeDirectory` with the
+  **auto-vacate killer feature** ([#7](https://github.com/agentculture/office-agent/issues/7)).
+  When BambooHR no longer returns an employee in its `/v1/employees/directory`
+  response, every seat assigned to them renders as vacant — the assignment
+  row in the store is **not** mutated; the filter is applied at view time.
+- New optional extra: `pip install office-cli[bamboohr]` pulls
+  `requests>=2.31`. The CSV/stub paths still work without the dep tree.
+- `office_cli.people.bamboohr` package: `BambooHRClient` Protocol,
+  `RequestsBambooHRClient` (lazy import; thin shim over the BambooHR
+  REST API), and `BambooHRDirectory` (5-minute TTL cache, fail-open on
+  refresh errors with a stale-cache stderr warning).
+- `office_cli._config.resolve_directory` picks the directory backend
+  from `data/offices.yaml`'s `directory:` block, with env overrides
+  `OFFICE_DIRECTORY` / `BAMBOOHR_API_TOKEN` / `BAMBOOHR_SUBDOMAIN`. The
+  API token is **env-only** by design (never in YAML).
+- `SeatService` now accepts an optional `directory` argument and
+  applies the auto-vacate filter in `list_seats` and `whereis`. Default
+  is `StubDirectory` so existing callers see no behavioral change.
+- `build_service(data_dir)` resolves and threads through both the
+  storage backend and the directory.
+
 ## [0.2.0] - 2026-05-01
 
 ### Added
@@ -80,7 +105,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   preserving the SVG ID contract and architectural guardrails for the v1
   seating system (issue #1).
 
-[Unreleased]: https://github.com/agentculture/office-agent/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/agentculture/office-agent/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/agentculture/office-agent/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/agentculture/office-agent/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/agentculture/office-agent/compare/v0.0.1...v0.1.0
 [0.0.1]: https://github.com/agentculture/office-agent/releases/tag/v0.0.1

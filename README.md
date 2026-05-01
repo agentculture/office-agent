@@ -6,12 +6,13 @@ BambooHR; assignments live in a Google Sheet (v1) or DynamoDB (v2). The
 CLI exposes the same operations as the Slack `/whereis` command and the
 web map.
 
-> **Status — v0.2.0.** Stages 1 + 2 of the v1 seating system are in:
-> floor SVG parser/validator, CSV- *and* Google Sheets-backed
-> assignment store with append-only audit log, CLI verbs (`floors`,
-> `seats`, `whereis`). BambooHR, Slack `/whereis`, and the web map
-> land in later stages on top of the same `office_cli.seats` service.
-> See [issue #1](https://github.com/agentculture/office-agent/issues/1).
+> **Status — v0.3.0.** Stages 1 + 2 + 3 of the v1 seating system are
+> in: floor SVG parser/validator, CSV / Google Sheets-backed assignment
+> store with append-only audit log, BambooHR-backed `EmployeeDirectory`
+> with the auto-vacate killer feature, and CLI verbs (`floors`,
+> `seats`, `whereis`). Slack `/whereis` and the web map land in later
+> stages on top of the same `office_cli.seats` service. See
+> [issue #1](https://github.com/agentculture/office-agent/issues/1).
 
 ## Naming surfaces
 
@@ -79,6 +80,34 @@ storage:
 
 Reads honor a 5-minute TTL cache; writes invalidate it. See
 `docs/architecture.md` for the full storage contract.
+
+### People directory (BambooHR)
+
+`office` defaults to a no-op `StubDirectory` that trusts whatever email
+it receives. Switch to BambooHR for the auto-vacate killer feature
+(seats render as vacant automatically when an employee is offboarded):
+
+```bash
+pip install office-cli[bamboohr]
+export OFFICE_DIRECTORY=bamboohr
+export BAMBOOHR_SUBDOMAIN=tipalti
+export BAMBOOHR_API_TOKEN=...   # env-only — do not commit
+```
+
+…or declare the public bits in `data/offices.yaml` and keep the token
+in the env:
+
+```yaml
+directory:
+  type: bamboohr
+  bamboohr:
+    subdomain: tipalti
+    cache_ttl_seconds: 300
+```
+
+The directory affects rendering only; assignments stay in the store
+unchanged. Re-activating an employee in BambooHR restores their seat
+without any write.
 
 ## Adding a new floor
 
