@@ -21,13 +21,17 @@ if TYPE_CHECKING:
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
-def parse_iso_date(s: str, *, field: str = "date") -> str:
+def parse_iso_date(s: str, *, field: str = "date", example: str = "2026-07-01") -> str:
     """Validate ``s`` as ``YYYY-MM-DD`` and return it normalized.
 
     Raises :class:`office_cli.cli._errors.OfficeError` (``EXIT_USER_ERROR``)
     on malformed input. The error class is imported lazily to avoid a
     circular dependency with the ``office_cli.cli`` package, which itself
     pulls in command modules that import this helper.
+
+    ``example`` is woven into the remediation string so the helper stays
+    surface-neutral — CLI callers pass ``"--as-of 2026-07-01"``, the API
+    passes ``"?as_of=2026-07-01"``, and Slack falls back to a bare date.
     """
     # Lazy import — see docstring.
     from office_cli.cli._errors import EXIT_USER_ERROR, OfficeError
@@ -36,7 +40,7 @@ def parse_iso_date(s: str, *, field: str = "date") -> str:
         raise OfficeError(
             code=EXIT_USER_ERROR,
             message=f"{field} must be an ISO date (YYYY-MM-DD), got: {s!r}",
-            remediation="example: --as-of 2026-07-01",
+            remediation=f"example: {example}",
         )
     try:
         datetime.strptime(s, "%Y-%m-%d")
@@ -44,7 +48,7 @@ def parse_iso_date(s: str, *, field: str = "date") -> str:
         raise OfficeError(
             code=EXIT_USER_ERROR,
             message=f"{field} is not a real calendar date: {s!r}",
-            remediation="use a valid YYYY-MM-DD date such as 2026-07-01",
+            remediation=f"use a valid YYYY-MM-DD date such as {example.split()[-1]}",
         ) from err
     return s
 

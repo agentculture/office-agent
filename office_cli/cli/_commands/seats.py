@@ -22,7 +22,11 @@ def cmd_list(args: argparse.Namespace) -> int:
             message="--vacant and --occupied are mutually exclusive",
             remediation="pass at most one of the two",
         )
-    as_of = parse_iso_date(args.as_of, field="--as-of") if args.as_of else today_iso_date()
+    as_of = (
+        parse_iso_date(args.as_of, field="--as-of", example="--as-of 2026-07-01")
+        if args.as_of
+        else today_iso_date()
+    )
     rows = service.list_seats(
         floor=args.floor,
         cluster=args.cluster,
@@ -48,8 +52,16 @@ def cmd_list(args: argparse.Namespace) -> int:
 def cmd_assign(args: argparse.Namespace) -> int:
     data_dir = resolve_data_dir(args)
     service = build_service(data_dir)
-    eff_from = parse_iso_date(args.from_date, field="--from") if args.from_date else None
-    eff_until = parse_iso_date(args.until_date, field="--until") if args.until_date else None
+    eff_from = (
+        parse_iso_date(args.from_date, field="--from", example="--from 2026-07-01")
+        if args.from_date
+        else None
+    )
+    eff_until = (
+        parse_iso_date(args.until_date, field="--until", example="--until 2026-12-31")
+        if args.until_date
+        else None
+    )
     a = service.assign(
         args.seat_id,
         args.email,

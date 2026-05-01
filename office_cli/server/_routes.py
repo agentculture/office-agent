@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from office_cli._dates import parse_iso_date
+from office_cli._dates import parse_iso_date, today_iso_date
 from office_cli.cli._errors import EXIT_USER_ERROR, OfficeError
 from office_cli.offices import Floor, Office
 from office_cli.seats import Assignment, SeatService
@@ -36,7 +36,11 @@ def register_routes(app: Any, service: SeatService) -> None:
         return {"offices": [_office_to_dict(office) for office in service.offices.values()]}
 
     @app.get("/api/floors/{floor_id}")
-    def get_floor(floor_id: str, as_of: str = "") -> dict:
+    def get_floor(floor_id: str, as_of: str = "", asOf: str = "") -> dict:
+        # Accept both ``as_of`` (Python convention) and ``asOf`` (camelCase
+        # used by the SPA URL surface so direct-API callers see the same
+        # contract). When both are passed, ``as_of`` wins.
+        raw = as_of or asOf
         floor, office_id = _resolve_floor(service, floor_id)
         if floor is None:
             raise HTTPException(
@@ -46,13 +50,21 @@ def register_routes(app: Any, service: SeatService) -> None:
                     "remediation": "GET /api/offices to see available floor ids",
                 },
             )
-        as_of_value = parse_iso_date(as_of, field="as_of") if as_of else None
+        if raw:
+            as_of_value = parse_iso_date(raw, field="as_of", example="?as_of=2026-07-01")
+            explicit = True
+        else:
+            as_of_value = today_iso_date(service._clock)
+            explicit = False
         seats = [_redact(a) for a in service.list_seats(floor=floor_id, as_of=as_of_value)]
         return {
             "floor": _floor_to_dict(floor, office_id),
             "svg_url": f"/svgs/{floor.svg.name}",
             "seats": seats,
-            "as_of": as_of_value,
+            # Echo the date back only when the caller asked for one — this
+            # is what the frontend uses to decide whether to surface the
+            # banner.
+            "as_of": as_of_value if explicit else None,
         }
 
     @app.get("/", response_class=RedirectResponse)

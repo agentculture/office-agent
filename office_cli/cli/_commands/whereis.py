@@ -17,7 +17,11 @@ from office_cli.seats import build_service
 def cmd_whereis(args: argparse.Namespace) -> int:
     data_dir = resolve_data_dir(args)
     service = build_service(data_dir)
-    as_of = parse_iso_date(args.as_of, field="--as-of") if args.as_of else today_iso_date()
+    as_of = (
+        parse_iso_date(args.as_of, field="--as-of", example="--as-of 2026-07-01")
+        if args.as_of
+        else today_iso_date()
+    )
     a = service.whereis(args.email, as_of=as_of)
     if args.json:
         emit_result(

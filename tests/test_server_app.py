@@ -114,6 +114,31 @@ def test_get_floor_with_as_of_filters(data_dir: Path) -> None:
         assert body["as_of"] is None
 
 
+def test_get_floor_defaults_to_today_filter(data_dir: Path) -> None:
+    """No ``as_of`` query param → server defaults to today (using its clock)."""
+    s = _service(data_dir)
+    s.assign("5-T-01", "alice@example.com", effective_from="2099-01-01")
+    with TestClient(build_app(s, data_dir=data_dir)) as c:
+        body = c.get("/api/floors/tlv-floor-5").json()
+    seats = {x["seat_id"]: x for x in body["seats"]}
+    # The future-dated row is hidden as vacant under the default-today filter.
+    assert seats["5-T-01"]["employee_email"] is None
+    # When the caller did not pass ``as_of``, the response echoes ``null`` so
+    # the frontend knows not to surface the banner.
+    assert body["as_of"] is None
+
+
+def test_get_floor_accepts_camelcase_asof(data_dir: Path) -> None:
+    """``?asOf=`` is honored alongside ``?as_of=`` for direct-API callers."""
+    s = _service(data_dir)
+    s.assign("5-T-01", "alice@example.com", effective_from="2026-07-01")
+    with TestClient(build_app(s, data_dir=data_dir)) as c:
+        body = c.get("/api/floors/tlv-floor-5?asOf=2026-07-15").json()
+    seats = {x["seat_id"]: x for x in body["seats"]}
+    assert seats["5-T-01"]["employee_email"] == "alice@example.com"
+    assert body["as_of"] == "2026-07-15"
+
+
 def test_get_floor_rejects_malformed_as_of(data_dir: Path) -> None:
     with _client(data_dir) as c:
         r = c.get("/api/floors/tlv-floor-5?as_of=tomorrow")
