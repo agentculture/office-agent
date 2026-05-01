@@ -113,6 +113,34 @@ def test_list_filters(data_dir: Path) -> None:
     assert all(a.seat_id.split("-")[1] == "T" for a in cluster_t)
 
 
+def test_history_sorted_by_timestamp(data_dir: Path) -> None:
+    """Qodo #5: history must be chronological even if the audit log is reordered."""
+    s = build_service(data_dir)
+    # Synthesize out-of-order audit entries directly.
+    from office_cli.seats._models import AuditEntry
+
+    s.audit.append_many(
+        [
+            AuditEntry(
+                timestamp="2026-05-01T00:00:02Z",
+                actor="t",
+                action="assign",
+                seat_id="5-T-01",
+                employee_email="b@x",
+            ),
+            AuditEntry(
+                timestamp="2026-05-01T00:00:01Z",
+                actor="t",
+                action="assign",
+                seat_id="5-T-01",
+                employee_email="a@x",
+            ),
+        ]
+    )
+    history = s.history("5-T-01")
+    assert [e.timestamp for e in history] == sorted(e.timestamp for e in history)
+
+
 def test_room_assignable(data_dir: Path) -> None:
     s = _service(data_dir)
     a = s.assign("5.18", "exec@example.com")

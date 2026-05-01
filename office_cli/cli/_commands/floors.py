@@ -58,66 +58,77 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 def cmd_validate(args: argparse.Namespace) -> int:
     data_dir = resolve_data_dir(args)
-    offices = load_offices(data_dir)
-    floor_index: dict[Path, Floor] = {}
-    for office in offices.values():
-        for floor in office.floors.values():
-            floor_index[floor.svg.resolve()] = floor
-
-    targets: list[Path]
-    if args.path:
-        targets = [Path(args.path).resolve()]
-    elif args.all:
-        targets = sorted(floor_index.keys())
-    else:
-        raise OfficeError(
-            code=EXIT_USER_ERROR,
-            message="pass an SVG path or --all",
-            remediation="example: office floors validate floors/tlv-floor-5.svg",
-        )
-
-    payload: list[dict[str, object]] = []
-    error_count = 0
-    for target in targets:
-        floor = floor_index.get(target)
-        if floor is None:
-            raise OfficeError(
-                code=EXIT_USER_ERROR,
-                message=f"SVG {target} is not declared in offices.yaml",
-                remediation="add a floors entry pointing at this SVG",
-            )
-        svg = parse_svg(target)
-        issues = validate_floor(svg, floor)
-        errors = [i for i in issues if i.severity is Severity.ERROR]
-        warnings = [i for i in issues if i.severity is Severity.WARNING]
-        error_count += len(errors)
-        payload.append(
-            {
-                "floor": floor.id,
-                "svg": str(target),
-                "ok": not errors,
-                "errors": [i.to_dict() for i in errors],
-                "warnings": [i.to_dict() for i in warnings],
-                "seat_count": len(svg.seat_ids),
-                "room_count": len(svg.room_ids),
-            }
-        )
-
+    floor_index = _index_floors(load_offices(data_dir))
+    targets = _resolve_targets(args, floor_index, data_dir)
+    payload = [_validate_one(t, floor_index) for t in targets]
+    error_count = sum(len(item["errors"]) for item in payload)  # type: ignore[arg-type]
     if args.json:
         emit_result({"results": payload}, json_mode=True)
     else:
-        for item in payload:
-            mark = "OK " if item["ok"] else "FAIL"
-            emit_result(
-                f"{mark} {item['floor']} ({item['svg']}) "
-                f"seats={item['seat_count']} rooms={item['room_count']}",
-                json_mode=False,
-            )
-            for err in item["errors"]:  # type: ignore[union-attr]
-                emit_diagnostic(f"  error [{err['rule']}]: {err['message']}")
-            for warn in item["warnings"]:  # type: ignore[union-attr]
-                emit_diagnostic(f"  warn  [{warn['rule']}]: {warn['message']}")
+        _print_text(payload)
     return EXIT_USER_ERROR if error_count else 0
+
+
+def _index_floors(offices: dict[str, object]) -> dict[Path, Floor]:
+    out: dict[Path, Floor] = {}
+    for office in offices.values():
+        for floor in office.floors.values():  # type: ignore[attr-defined]
+            out[floor.svg.resolve()] = floor
+    return out
+
+
+def _resolve_targets(
+    args: argparse.Namespace, floor_index: dict[Path, Floor], data_dir: Path
+) -> list[Path]:
+    if args.path:
+        p = Path(args.path)
+        # Relative paths resolve against the data dir (not cwd) so they line up
+        # with floor.svg paths from offices.yaml when --data-dir != $PWD.
+        return [(p if p.is_absolute() else data_dir / p).resolve()]
+    if args.all:
+        return sorted(floor_index.keys())
+    raise OfficeError(
+        code=EXIT_USER_ERROR,
+        message="pass an SVG path or --all",
+        remediation="example: office floors validate floors/tlv-floor-5.svg",
+    )
+
+
+def _validate_one(target: Path, floor_index: dict[Path, Floor]) -> dict[str, object]:
+    floor = floor_index.get(target)
+    if floor is None:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"SVG {target} is not declared in offices.yaml",
+            remediation="add a floors entry pointing at this SVG",
+        )
+    svg = parse_svg(target)
+    issues = validate_floor(svg, floor)
+    errors = [i for i in issues if i.severity is Severity.ERROR]
+    warnings = [i for i in issues if i.severity is Severity.WARNING]
+    return {
+        "floor": floor.id,
+        "svg": str(target),
+        "ok": not errors,
+        "errors": [i.to_dict() for i in errors],
+        "warnings": [i.to_dict() for i in warnings],
+        "seat_count": len(svg.seat_ids),
+        "room_count": len(svg.room_ids),
+    }
+
+
+def _print_text(payload: list[dict[str, object]]) -> None:
+    for item in payload:
+        mark = "OK " if item["ok"] else "FAIL"
+        emit_result(
+            f"{mark} {item['floor']} ({item['svg']}) "
+            f"seats={item['seat_count']} rooms={item['room_count']}",
+            json_mode=False,
+        )
+        for err in item["errors"]:  # type: ignore[union-attr]
+            emit_diagnostic(f"  error [{err['rule']}]: {err['message']}")
+        for warn in item["warnings"]:  # type: ignore[union-attr]
+            emit_diagnostic(f"  warn  [{warn['rule']}]: {warn['message']}")
 
 
 def register(sub: argparse._SubParsersAction) -> None:

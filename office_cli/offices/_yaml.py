@@ -76,6 +76,12 @@ def _parse_office(entry: Any, floors_dir: Path) -> Office:
     floors: dict[str, Floor] = {}
     for f in floors_raw:
         floor = _parse_floor(f, floors_dir, oid)
+        if floor.id in floors:
+            raise OfficeError(
+                code=EXIT_USER_ERROR,
+                message=f"duplicate floor id under office `{oid}`: {floor.id}",
+                remediation="floor ids must be unique within an office in offices.yaml",
+            )
         floors[floor.id] = floor
     return Office(id=oid, name=name, address=address, floors=floors)
 

@@ -35,90 +35,110 @@ class Issue:
 def validate_floor(svg: FloorSvg, floor: Floor) -> list[Issue]:
     """Return a list of issues; empty list means the SVG conforms."""
     issues: list[Issue] = []
+    issues.extend(_check_view_box(svg))
+    issues.extend(_check_duplicates(svg))
+    for sid in svg.seat_ids:
+        issues.extend(_check_seat(sid, floor))
+    for rid in svg.room_ids:
+        issues.extend(_check_room(rid, floor))
+    issues.extend(_check_untagged(svg))
+    issues.extend(_check_capacity(svg, floor))
+    return issues
 
-    if svg.view_box != _EXPECTED_VIEW_BOX:
-        issues.append(
+
+def _check_view_box(svg: FloorSvg) -> list[Issue]:
+    if svg.view_box == _EXPECTED_VIEW_BOX:
+        return []
+    return [
+        Issue(
+            Severity.ERROR,
+            "view-box",
+            f"viewBox is {svg.view_box!r}; expected {_EXPECTED_VIEW_BOX!r}",
+        )
+    ]
+
+
+def _check_duplicates(svg: FloorSvg) -> list[Issue]:
+    return [
+        Issue(Severity.ERROR, "duplicate-id", f"id {sid!r} appears more than once")
+        for sid in svg.duplicate_ids
+    ]
+
+
+def _check_seat(sid: str, floor: Floor) -> list[Issue]:
+    if not is_seat_id(sid):
+        return [
             Issue(
                 Severity.ERROR,
-                "view-box",
-                f"viewBox is {svg.view_box!r}; expected {_EXPECTED_VIEW_BOX!r}",
+                "seat-id-format",
+                f"seat id {sid!r} does not match <floor>-<CLUSTER>-<NN>",
+            )
+        ]
+    parsed = parse_seat_id(sid)
+    out: list[Issue] = []
+    if parsed.floor != floor.number:
+        out.append(
+            Issue(
+                Severity.ERROR,
+                "seat-floor-mismatch",
+                f"seat {sid!r} starts with floor {parsed.floor!r}; "
+                f"expected {floor.number!r} (from floor id {floor.id!r})",
             )
         )
+    if parsed.cluster not in floor.clusters:
+        out.append(
+            Issue(
+                Severity.ERROR,
+                "unknown-cluster",
+                f"seat {sid!r} references cluster {parsed.cluster!r} "
+                f"not declared for floor {floor.id!r}",
+            )
+        )
+    return out
 
-    for sid in svg.duplicate_ids:
-        issues.append(Issue(Severity.ERROR, "duplicate-id", f"id {sid!r} appears more than once"))
 
-    for sid in svg.seat_ids:
-        if not is_seat_id(sid):
-            issues.append(
-                Issue(
-                    Severity.ERROR,
-                    "seat-id-format",
-                    f"seat id {sid!r} does not match <floor>-<CLUSTER>-<NN>",
-                )
+def _check_room(rid: str, floor: Floor) -> list[Issue]:
+    if not is_room_id(rid):
+        return [
+            Issue(
+                Severity.ERROR,
+                "room-id-format",
+                f"room id {rid!r} does not match the architect <N>.<NN> pattern",
             )
-            continue
-        parsed = parse_seat_id(sid)
-        if parsed.floor != floor.number:
-            issues.append(
-                Issue(
-                    Severity.ERROR,
-                    "seat-floor-mismatch",
-                    f"seat {sid!r} starts with floor {parsed.floor!r}; "
-                    f"expected {floor.number!r} (from floor id {floor.id!r})",
-                )
+        ]
+    if rid not in floor.rooms:
+        return [
+            Issue(
+                Severity.WARNING,
+                "room-not-in-yaml",
+                f"room {rid!r} present in SVG but not declared in offices.yaml "
+                f"for floor {floor.id!r}",
             )
-        if parsed.cluster not in floor.clusters:
-            issues.append(
-                Issue(
-                    Severity.ERROR,
-                    "unknown-cluster",
-                    f"seat {sid!r} references cluster {parsed.cluster!r} "
-                    f"not declared for floor {floor.id!r}",
-                )
-            )
+        ]
+    return []
 
-    for rid in svg.room_ids:
-        if not is_room_id(rid):
-            issues.append(
-                Issue(
-                    Severity.ERROR,
-                    "room-id-format",
-                    f"room id {rid!r} does not match the architect <N>.<NN> pattern",
-                )
-            )
-            continue
-        if rid not in floor.rooms:
-            issues.append(
-                Issue(
-                    Severity.WARNING,
-                    "room-not-in-yaml",
-                    f"room {rid!r} present in SVG but not declared in offices.yaml "
-                    f"for floor {floor.id!r}",
-                )
-            )
 
-    for sid in svg.untagged_ids:
-        if is_seat_id(sid) or is_room_id(sid):
-            issues.append(
-                Issue(
-                    Severity.ERROR,
-                    "missing-class",
-                    f'id {sid!r} looks like a seat/room but has no class="seat"/"room"',
-                )
-            )
+def _check_untagged(svg: FloorSvg) -> list[Issue]:
+    return [
+        Issue(
+            Severity.ERROR,
+            "missing-class",
+            f'id {sid!r} looks like a seat/room but has no class="seat"/"room"',
+        )
+        for sid in svg.untagged_ids
+        if is_seat_id(sid) or is_room_id(sid)
+    ]
 
+
+def _check_capacity(svg: FloorSvg, floor: Floor) -> list[Issue]:
     counts = Counter(parse_seat_id(s).cluster for s in svg.seat_ids if is_seat_id(s))
-    for letter, cluster in floor.clusters.items():
-        actual = counts.get(letter, 0)
-        if actual != cluster.capacity:
-            issues.append(
-                Issue(
-                    Severity.WARNING,
-                    "cluster-capacity-mismatch",
-                    f"cluster {letter!r} has {actual} seats in SVG; "
-                    f"offices.yaml declares capacity {cluster.capacity}",
-                )
-            )
-
-    return issues
+    return [
+        Issue(
+            Severity.WARNING,
+            "cluster-capacity-mismatch",
+            f"cluster {letter!r} has {counts.get(letter, 0)} seats in SVG; "
+            f"offices.yaml declares capacity {cluster.capacity}",
+        )
+        for letter, cluster in floor.clusters.items()
+        if counts.get(letter, 0) != cluster.capacity
+    ]

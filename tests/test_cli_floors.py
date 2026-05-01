@@ -49,6 +49,28 @@ def test_floors_validate_bad(
     assert result["errors"]
 
 
+def test_floors_validate_relative_path_from_other_cwd(
+    data_dir: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Relative SVG path must resolve against --data-dir, not cwd. Qodo #6."""
+    other = data_dir.parent / "elsewhere"
+    other.mkdir()
+    monkeypatch.chdir(other)
+    rc = main(
+        [
+            "floors",
+            "validate",
+            "floors/tlv-floor-5.svg",
+            "--json",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["results"][0]["ok"] is True
+
+
 def test_floors_validate_requires_target(
     data_dir: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

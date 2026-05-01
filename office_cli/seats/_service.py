@@ -54,7 +54,7 @@ class SeatService:
         for seat_id, floor_id in sorted(self._seat_to_floor.items()):
             if floor and floor_id != floor:
                 continue
-            if cluster and not seat_id.split("-")[1:2] == [cluster]:
+            if cluster and seat_id.split("-")[1:2] != [cluster]:
                 continue
             a = existing.get(
                 seat_id,
@@ -72,7 +72,7 @@ class SeatService:
 
     def history(self, seat_id: str) -> list[AuditEntry]:
         self._require_seat(seat_id)
-        return self.audit.for_seat(seat_id)
+        return sorted(self.audit.for_seat(seat_id), key=lambda e: e.timestamp)
 
     # -- Mutations -------------------------------------------------------
 

@@ -34,6 +34,27 @@ def test_malformed_yaml_raises(tmp_path: Path) -> None:
     assert exc.value.code == 1
 
 
+def test_duplicate_floor_id_rejected(tmp_path: Path) -> None:
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "offices.yaml").write_text(
+        """
+offices:
+  - id: tlv
+    name: Tel Aviv
+    floors:
+      - id: tlv-floor-5
+        clusters: { T: { capacity: 1 } }
+      - id: tlv-floor-5
+        clusters: { K: { capacity: 1 } }
+""".lstrip(),
+        encoding="utf-8",
+    )
+    with pytest.raises(OfficeError) as exc:
+        load_offices(tmp_path)
+    assert exc.value.code == 1
+    assert "duplicate floor id" in exc.value.message
+
+
 def test_missing_office_id_rejected(tmp_path: Path) -> None:
     (tmp_path / "data").mkdir()
     (tmp_path / "data" / "offices.yaml").write_text(

@@ -9,6 +9,8 @@ from office_cli.cli._errors import EXIT_USER_ERROR, OfficeError
 from office_cli.cli._output import emit_result
 from office_cli.seats import build_service
 
+_NOTE_HELP = "Optional free-text note."
+
 
 def cmd_list(args: argparse.Namespace) -> int:
     data_dir = resolve_data_dir(args)
@@ -113,7 +115,7 @@ def register(sub: argparse._SubParsersAction) -> None:
     p_assign = inner.add_parser("assign", help="Assign a seat to an employee email.")
     p_assign.add_argument("seat_id")
     p_assign.add_argument("email")
-    p_assign.add_argument("--note", help="Optional free-text note.")
+    p_assign.add_argument("--note", help=_NOTE_HELP)
     p_assign.add_argument(
         "--hidden", action="store_true", help="Mark assignment as private (hidden=TRUE)."
     )
@@ -123,7 +125,7 @@ def register(sub: argparse._SubParsersAction) -> None:
 
     p_unassign = inner.add_parser("unassign", help="Vacate a seat.")
     p_unassign.add_argument("seat_id")
-    p_unassign.add_argument("--note", help="Optional free-text note.")
+    p_unassign.add_argument("--note", help=_NOTE_HELP)
     p_unassign.add_argument("--json", action="store_true")
     add_data_dir_arg(p_unassign)
     p_unassign.set_defaults(func=cmd_unassign)
@@ -131,7 +133,7 @@ def register(sub: argparse._SubParsersAction) -> None:
     p_move = inner.add_parser("move", help="Atomically move an employee to a new seat.")
     p_move.add_argument("email")
     p_move.add_argument("new_seat_id")
-    p_move.add_argument("--note", help="Optional free-text note.")
+    p_move.add_argument("--note", help=_NOTE_HELP)
     p_move.add_argument("--json", action="store_true")
     add_data_dir_arg(p_move)
     p_move.set_defaults(func=cmd_move)
