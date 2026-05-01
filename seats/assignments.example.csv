@@ -1,0 +1,4 @@
+seat_id,floor,employee_email,last_updated,hidden,notes,effective_from,effective_until
+5-T-01,tlv-floor-5,alice@example.com,2026-04-30T10:00:00Z,FALSE,,2026-04-30T10:00:00Z,
+5-T-02,tlv-floor-5,,2026-04-25T08:00:00Z,FALSE,ergonomic chair,,
+5.18,tlv-floor-5,bob@example.com,2026-04-29T14:00:00Z,TRUE,exec seat,2026-04-29T14:00:00Z,

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600">
+  <g id="seats">
+    <!-- bad floor segment (4 instead of 5) -->
+    <rect id="4-T-01" class="seat" x="0" y="0" width="10" height="10"/>
+    <!-- malformed seat id -->
+    <rect id="5-T-1" class="seat" x="10" y="0" width="10" height="10"/>
+    <!-- duplicate id -->
+    <rect id="5-T-02" class="seat" x="20" y="0" width="10" height="10"/>
+    <rect id="5-T-02" class="seat" x="30" y="0" width="10" height="10"/>
+    <!-- looks like a seat but missing class -->
+    <rect id="5-T-03" x="40" y="0" width="10" height="10"/>
+    <!-- unknown cluster -->
+    <rect id="5-Q-01" class="seat" x="50" y="0" width="10" height="10"/>
+  </g>
+  <g id="rooms">
+    <!-- bad room id format -->
+    <polygon id="room-five-eighteen" class="room" points="0,0 10,0 10,10 0,10"/>
+  </g>
+</svg>

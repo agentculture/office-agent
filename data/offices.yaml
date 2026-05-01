@@ -1,0 +1,24 @@
+# Office topology — the integration boundary between the floor-plan SVGs in
+# `floors/` and the `office_cli` backend.
+#
+# Per CLAUDE.md / issue #1:
+# - office id is short, hyphenated (`tlv`, `fc`); used as `office.id`;
+# - floor id is `<office>-floor-<N>`; the trailing number must match the
+#   `<floor>-<CLUSTER>-<NN>` segment in seat ids inside the SVG;
+# - each cluster declares an integer capacity; the build warns if it does not
+#   match the count of seat ids in the SVG;
+# - rooms list architect ids verbatim (`5.18`).
+
+offices:
+  - id: tlv
+    name: "Tel Aviv"
+    address: "Tel Aviv, Israel"
+    floors:
+      - id: tlv-floor-5
+        svg: floors/tlv-floor-5.svg
+        status: active
+        clusters:
+          T: { capacity: 6, type: open-space }
+          Z: { capacity: 2, type: phone-room }
+        rooms:
+          "5.18": { name: "Meeting Room 8P", type: meeting, capacity: 8 }

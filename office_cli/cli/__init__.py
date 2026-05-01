@@ -17,7 +17,10 @@ import sys
 
 from office_cli import __version__
 from office_cli.cli._commands import explain as _explain_cmd
+from office_cli.cli._commands import floors as _floors_cmd
 from office_cli.cli._commands import learn as _learn_cmd
+from office_cli.cli._commands import seats as _seats_cmd
+from office_cli.cli._commands import whereis as _whereis_cmd
 from office_cli.cli._commands import whoami as _whoami_cmd
 from office_cli.cli._errors import EXIT_INTERNAL_ERROR, EXIT_USER_ERROR, OfficeError
 from office_cli.cli._output import emit_error
@@ -47,9 +50,9 @@ def _build_parser() -> argparse.ArgumentParser:
     _learn_cmd.register(sub)
     _explain_cmd.register(sub)
     _whoami_cmd.register(sub)
-    # Register noun groups here:
-    #   from office_cli.cli._commands import seat as _seat_group
-    #   _seat_group.register(sub)
+    _floors_cmd.register(sub)
+    _seats_cmd.register(sub)
+    _whereis_cmd.register(sub)
 
     return parser
 

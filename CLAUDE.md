@@ -36,28 +36,34 @@ office-agent/
 │   │   ├── __init__.py          # argparse main(); _ArgumentParser override
 │   │   ├── _errors.py           # OfficeError + EXIT_SUCCESS / _USER_ERROR / _ENV_ERROR / _INTERNAL_ERROR
 │   │   ├── _output.py           # emit_result / emit_error / emit_diagnostic
-│   │   └── _commands/           # learn, explain, whoami (and future verbs)
+│   │   └── _commands/           # learn, explain, whoami, floors, seats, whereis
+│   ├── _config.py               # resolve_data_dir() / --data-dir / OFFICE_DATA_DIR
+│   ├── offices/                 # offices.yaml loader + Office/Floor/Cluster/Room
+│   ├── floors/                  # SVG parse + ID contract + validator
+│   ├── seats/                   # AssignmentStore + CsvStore + AuditLog + SeatService
+│   ├── people/                  # Employee + EmployeeDirectory (StubDirectory in v0.1.0)
 │   └── explain/                 # Markdown catalog for `office explain <path>`
-├── tests/                       # pytest suite (smoke / learn / whoami)
+├── data/offices.yaml            # office / floor / cluster topology
+├── floors/                      # human-traced floor SVGs
+├── seats/                       # assignments.csv + audit-log.csv (git-ignored)
+├── docs/                        # architecture.md, tracing-guide.md (TBD)
+├── tests/                       # pytest suite incl. fixtures/ for offices+floors
 ├── .github/workflows/           # tests.yml, publish.yml
 ├── .claude/skills/              # vendored from agentculture/steward
 └── pyproject.toml               # SSoT for version; [project.scripts] entry
 ```
-
-Future surfaces (issue #1):
-
-- `floors/<office>-<floor>.svg` — human-traced floor plans (Inkscape)
-- `data/offices.yaml` — office / floor / cluster metadata (capacity, etc.)
-- `seats/assignments.example.csv` — schema example (real data lives in Sheets/DB)
 
 ## Build / test / publish
 
 ```bash
 uv sync                           # install runtime + dev deps
 uv run pytest -n auto -v          # full suite, parallel
-uv run office --version           # 0.0.1
+uv run office --version           # 0.1.0
 uv run office learn               # agent affordance
 uv run office whoami              # auth probe stub
+uv run office floors validate floors/tlv-floor-5.svg
+uv run office seats list --vacant
+uv run office whereis alice@example.com
 uv run python -m office_cli       # equivalent to `office`
 
 uv run black --check office_cli tests

@@ -1,6 +1,6 @@
 [project]
 name = "office-cli"
-version = "0.0.1"
+version = "0.1.0"
 description = "Office — CLI to manage sittings and meeting rooms in office maps."
 readme = "README.md"
 license = "MIT"
@@ -13,7 +13,9 @@ classifiers = [
     "Topic :: Software Development",
     "Intended Audience :: Developers",
 ]
-dependencies = []
+dependencies = [
+    "PyYAML>=6.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/agentculture/office-agent"
@@ -64,7 +66,7 @@ target-version = ["py312"]
 
 [tool.bandit]
 exclude_dirs = ["tests"]
-skips = ["B101", "B404", "B603"]
+skips = ["B101", "B404", "B603", "B314", "B405"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

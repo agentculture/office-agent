@@ -1,0 +1,11 @@
+offices:
+  - id: tlv
+    name: "Tel Aviv"
+    floors:
+      - id: tlv-floor-5
+        svg: floors/tlv-floor-5.svg
+        clusters:
+          T: { capacity: 6, type: open-space }
+          Z: { capacity: 2, type: phone-room }
+        rooms:
+          "5.18": { name: "Meeting Room 8P", type: meeting, capacity: 8 }

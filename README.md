@@ -6,10 +6,12 @@ BambooHR; assignments live in a Google Sheet (v1) or DynamoDB (v2). The
 CLI exposes the same operations as the Slack `/whereis` command and the
 web map.
 
-> **Status — v0.0.1.** This release ships only the agent-first scaffold
-> (`learn`, `explain`, `whoami`). Real verbs (seat assign, room book,
-> where, …) land in later versions on top of the SVG floor-plan contract
-> defined in [issue #1](https://github.com/agentculture/office-agent/issues/1).
+> **Status — v0.1.0.** Stage 1 of the v1 seating system is in: floor
+> SVG parser/validator, CSV-backed assignment store with append-only
+> audit log, and CLI verbs (`floors`, `seats`, `whereis`). Google
+> Sheets, BambooHR, Slack `/whereis`, and the web map land in later
+> stages on top of the same `office_cli.seats` service. See
+> [issue #1](https://github.com/agentculture/office-agent/issues/1).
 
 ## Naming surfaces
 
@@ -34,13 +36,34 @@ office --version
 ## Use
 
 ```bash
-office learn              # structured self-teaching prompt
-office learn --json       # same, JSON-shaped
-office explain office     # markdown root entry
-office explain whoami     # docs for any verb
-office whoami             # auth probe (returns "unauthenticated" in v0.0.1)
-office whoami --json      # JSON: {status, user, backends}
+office learn                                    # self-teaching prompt
+office explain seats                            # markdown docs for any verb
+office whoami --json                            # auth probe (stub)
+
+# v0.1.0 seating verbs:
+office floors list --json
+office floors validate floors/tlv-floor-5.svg
+office seats list --vacant
+office seats assign 5-T-01 alice@example.com
+office seats move alice@example.com 5-T-02
+office seats history 5-T-01 --json
+office whereis alice@example.com
 ```
+
+`office` reads `data/offices.yaml`, `floors/`, and `seats/` from the
+current working directory. Override with `--data-dir DIR` or
+`OFFICE_DATA_DIR=DIR`.
+
+## Adding a new floor
+
+1. **Trace the floor in Inkscape** following `docs/tracing-guide.md` and
+   the SVG ID contract in `CLAUDE.md`. Save as Plain SVG.
+2. **Drop the SVG into `floors/`** as `<office>-floor-<N>.svg`.
+3. **Add an entry to `data/offices.yaml`** with cluster capacities and
+   any named rooms.
+4. Verify: `office floors validate floors/<file>.svg`. Errors fail the
+   command; warnings (e.g. cluster-capacity mismatches) are
+   informational.
 
 ## Develop
 
