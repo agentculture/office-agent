@@ -6,12 +6,12 @@ BambooHR; assignments live in a Google Sheet (v1) or DynamoDB (v2). The
 CLI exposes the same operations as the Slack `/whereis` command and the
 web map.
 
-> **Status — v0.1.0.** Stage 1 of the v1 seating system is in: floor
-> SVG parser/validator, CSV-backed assignment store with append-only
-> audit log, and CLI verbs (`floors`, `seats`, `whereis`). Google
-> Sheets, BambooHR, Slack `/whereis`, and the web map land in later
-> stages on top of the same `office_cli.seats` service. See
-> [issue #1](https://github.com/agentculture/office-agent/issues/1).
+> **Status — v0.2.0.** Stages 1 + 2 of the v1 seating system are in:
+> floor SVG parser/validator, CSV- *and* Google Sheets-backed
+> assignment store with append-only audit log, CLI verbs (`floors`,
+> `seats`, `whereis`). BambooHR, Slack `/whereis`, and the web map
+> land in later stages on top of the same `office_cli.seats` service.
+> See [issue #1](https://github.com/agentculture/office-agent/issues/1).
 
 ## Naming surfaces
 
@@ -53,6 +53,32 @@ office whereis alice@example.com
 `office` reads `data/offices.yaml`, `floors/`, and `seats/` from the
 current working directory. Override with `--data-dir DIR` or
 `OFFICE_DATA_DIR=DIR`.
+
+### Storage backend
+
+`office` defaults to CSV-backed storage under `seats/` (`assignments.csv`,
+`audit-log.csv`). To use Google Sheets instead:
+
+```bash
+pip install office-cli[sheets]
+export OFFICE_STORE=sheets
+export OFFICE_SHEETS_ID=1abc...
+export OFFICE_SHEETS_SA=/path/to/service-account.json
+```
+
+…or declare it in `data/offices.yaml`:
+
+```yaml
+storage:
+  type: sheets
+  sheets:
+    spreadsheet_id: "1abc..."
+    service_account: "data/sheets-service-account.json"
+    cache_ttl_seconds: 300
+```
+
+Reads honor a 5-minute TTL cache; writes invalidate it. See
+`docs/architecture.md` for the full storage contract.
 
 ## Adding a new floor
 

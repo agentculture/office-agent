@@ -7,6 +7,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-01
+
+### Added
+
+- v1 seating Stage 2 — Google Sheets-backed `AssignmentStore` and append-only
+  `AuditLog`. Selectable via `data/offices.yaml` (`storage.type: sheets`) or
+  the `OFFICE_STORE` / `OFFICE_SHEETS_ID` / `OFFICE_SHEETS_SA` env vars.
+- New optional extra: `pip install office-cli[sheets]` pulls `gspread>=6.0`.
+  CSV users do not pay for the dep tree.
+- `office_cli.seats.sheets` package: `SheetsStore`, `SheetsAuditLog`, and a
+  thin `SheetsClient` shim so unit tests use a `FakeSheetsClient` without
+  real credentials. Reads honor a 5-minute TTL cache; writes invalidate it.
+- `build_service(data_dir)` picks the assignment-store / audit-log pair from
+  the resolved storage config; the CSV path remains the default.
+
+### Changed
+
+- `office_cli.seats.__init__` re-exports the Sheets backends behind a
+  guarded import so the package still loads cleanly without `gspread`.
+
 ## [0.1.0] - 2026-05-01
 
 ### Added

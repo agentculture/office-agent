@@ -1,4 +1,4 @@
-# Architecture — v0.1.0 (Stage 1)
+# Architecture — v0.2.0 (Stage 1 + Stage 2)
 
 `office` ships in stages on top of issue
 [#1](https://github.com/agentculture/office-agent/issues/1). This document
@@ -50,13 +50,56 @@ boundary stays explicit.
 - Test fixtures + parametric tests on the ID contract, SVG parser,
   validator, store, service, and each CLI verb (text and JSON).
 
+## Stage 2 — implemented in v0.2.0
+
+- `office_cli.seats.sheets.SheetsStore` and `SheetsAuditLog` implement the
+  same `AssignmentStore` / append-only audit contracts as the CSV pair.
+- A thin `SheetsClient` Protocol (`read_rows`, `replace_rows`,
+  `append_rows`) lives between the store and `gspread`, so unit tests
+  use a `FakeSheetsClient` and never need real credentials.
+- `GspreadClient` is the production adapter; gspread is imported lazily,
+  so installations without the `[sheets]` extra still load
+  `office_cli.seats` cleanly.
+- 5-minute read cache (per-store, per-process); writes invalidate it.
+- Storage selection (`office_cli._config.resolve_storage`):
+
+  1. `storage:` block in `data/offices.yaml`,
+  2. `OFFICE_STORE` / `OFFICE_SHEETS_ID` / `OFFICE_SHEETS_SA` env vars,
+  3. CSV by default.
+
+Install the extra to use Sheets:
+
+```bash
+pip install office-cli[sheets]
+```
+
+Configure either via `data/offices.yaml`:
+
+```yaml
+storage:
+  type: sheets
+  sheets:
+    spreadsheet_id: "1abc..."
+    service_account: "data/sheets-service-account.json"
+    cache_ttl_seconds: 300
+```
+
+…or via env vars (which override the YAML block):
+
+```bash
+export OFFICE_STORE=sheets
+export OFFICE_SHEETS_ID=1abc...
+export OFFICE_SHEETS_SA=/abs/or/data-dir-relative/sa.json
+```
+
+The service-account JSON should be **git-ignored**.
+
 ## Deferred surfaces
 
-Each is a separate issue/PR after Stage 1 ships.
+Each is a separate issue/PR.
 
 | Stage              | Surface                                       | Notes                                                                   |
 | ------------------ | --------------------------------------------- | ----------------------------------------------------------------------- |
-| 2. Sheets store    | `office_cli.seats.SheetsStore`                | Same Protocol; service-account auth; 5-min read cache.                  |
 | 3. BambooHR        | `office_cli.people.BambooHRDirectory`         | Live pull, 5-min cache; auto-vacate on offboarding (the killer feature). |
 | 4. Slack `/whereis`| `office_slack/` Bolt app                      | Imports `SeatService.whereis`; renders Block Kit with deep link.        |
 | 5. Web frontend    | `office_web/` (Vite + a small Python server)  | Search-first map, `?asOf=YYYY-MM-DD`, role-aware `hidden` rendering.    |
