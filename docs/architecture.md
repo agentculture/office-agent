@@ -1,4 +1,4 @@
-# Architecture — v0.3.0 (Stages 1–3)
+# Architecture — v0.4.0 (Stages 1–4)
 
 `office` ships in stages on top of issue
 [#1](https://github.com/agentculture/office-agent/issues/1). This document
@@ -150,13 +150,51 @@ export BAMBOOHR_SUBDOMAIN=tipalti
 export BAMBOOHR_API_TOKEN=...
 ```
 
+## Stage 4 — implemented in v0.4.0
+
+- `office_cli.slack` subpackage wraps `SeatService.whereis` in a
+  `slack_bolt` app. The handler is structurally typed (any `client`
+  with `users_info` + `chat_postEphemeral`) so unit tests use a
+  `FakeSlackApp` + `FakeSlackClient` and never touch the SDK or the
+  network.
+- New CLI verb `office slack-serve` blocks on
+  `SocketModeHandler.start()`. **Socket Mode only** for v1 — no HTTP
+  endpoint, no signing-secret middleware. Requires both
+  `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`.
+- Three invocation shapes for `/whereis`:
+  - empty → look up the caller's seat (resolves their email via
+    `users.info`),
+  - `<@U…>` mention → resolve mentioned user's email,
+  - plain text containing an email → use it directly.
+- Responses are **ephemeral** by default — looking up a coworker's
+  seat does not broadcast to the channel. `hidden=TRUE` seats render
+  as "occupied (private)" with no email/notes leakage; Stage 7 will
+  lift the filter for `editor`/`planning` roles.
+- Setting `OFFICE_WEB_BASE_URL` adds an "Open map" deep-link button
+  (placeholder until Stage 5 ships the web map).
+- BambooHR auto-vacate (Stage 3) flows through transparently: a
+  `/whereis` for an offboarded employee returns "no seat assigned".
+
+Install the extra to use Slack:
+
+```bash
+pip install office-cli[slack]
+```
+
+Run:
+
+```bash
+SLACK_BOT_TOKEN=xoxb-... SLACK_APP_TOKEN=xapp-... office slack-serve
+```
+
+Required Slack app scopes: `commands`, `users:read.email`, `chat:write`.
+
 ## Deferred surfaces
 
 Each is a separate issue/PR.
 
 | Stage              | Surface                                       | Notes                                                                   |
 | ------------------ | --------------------------------------------- | ----------------------------------------------------------------------- |
-| 4. Slack `/whereis`| `office_slack/` Bolt app                      | Imports `SeatService.whereis`; renders Block Kit with deep link.        |
 | 5. Web frontend    | `office_web/` (Vite + a small Python server)  | Search-first map, `?asOf=YYYY-MM-DD`, role-aware `hidden` rendering.    |
 | 6. Effective dates | service-layer `effective_from / _until`       | Columns already exist; the service starts honoring them.                |
 | 7. SSO + roles     | viewer / editor / planning                    | Drives whether `hidden=TRUE` rows expose details.                       |

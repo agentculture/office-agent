@@ -6,12 +6,13 @@ BambooHR; assignments live in a Google Sheet (v1) or DynamoDB (v2). The
 CLI exposes the same operations as the Slack `/whereis` command and the
 web map.
 
-> **Status — v0.3.0.** Stages 1 + 2 + 3 of the v1 seating system are
-> in: floor SVG parser/validator, CSV / Google Sheets-backed assignment
+> **Status — v0.4.0.** Stages 1–4 of the v1 seating system are in:
+> floor SVG parser/validator, CSV / Google Sheets-backed assignment
 > store with append-only audit log, BambooHR-backed `EmployeeDirectory`
-> with the auto-vacate killer feature, and CLI verbs (`floors`,
-> `seats`, `whereis`). Slack `/whereis` and the web map land in later
-> stages on top of the same `office_cli.seats` service. See
+> with the auto-vacate killer feature, CLI verbs (`floors`, `seats`,
+> `whereis`), and a Slack `/whereis` slash-command listener. The web
+> map and remaining stages land on top of the same `office_cli.seats`
+> service. See
 > [issue #1](https://github.com/agentculture/office-agent/issues/1).
 
 ## Naming surfaces
@@ -108,6 +109,35 @@ directory:
 The directory affects rendering only; assignments stay in the store
 unchanged. Re-activating an employee in BambooHR restores their seat
 without any write.
+
+### Slack `/whereis`
+
+Run a Slack `/whereis` slash command backed by the same `SeatService`:
+
+```bash
+pip install office-cli[slack]
+export SLACK_BOT_TOKEN=xoxb-...
+export SLACK_APP_TOKEN=xapp-...
+office slack-serve
+```
+
+Required Slack app scopes:
+
+- `commands` — to register `/whereis`.
+- `users:read.email` — for `users.info` to return `profile.email`.
+- `chat:write` — to post the ephemeral response.
+
+Three invocation shapes:
+
+- `/whereis` — looks up the caller's own seat.
+- `/whereis @user` — Slack mention; resolves the user's email.
+- `/whereis email@domain` — plain text fallback.
+
+Responses are **ephemeral by default** — only the caller sees them.
+`hidden=TRUE` seats render as "occupied (private)" until role gating
+(Stage 7) lifts the filter for privileged callers. Setting
+`OFFICE_WEB_BASE_URL` adds an "Open map" deep-link button to the
+response (placeholder until the web map ships in Stage 5).
 
 ## Adding a new floor
 

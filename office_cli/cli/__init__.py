@@ -20,6 +20,7 @@ from office_cli.cli._commands import explain as _explain_cmd
 from office_cli.cli._commands import floors as _floors_cmd
 from office_cli.cli._commands import learn as _learn_cmd
 from office_cli.cli._commands import seats as _seats_cmd
+from office_cli.cli._commands import slack_serve as _slack_serve_cmd
 from office_cli.cli._commands import whereis as _whereis_cmd
 from office_cli.cli._commands import whoami as _whoami_cmd
 from office_cli.cli._errors import EXIT_INTERNAL_ERROR, EXIT_USER_ERROR, OfficeError
@@ -53,6 +54,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _floors_cmd.register(sub)
     _seats_cmd.register(sub)
     _whereis_cmd.register(sub)
+    _slack_serve_cmd.register(sub)
 
     return parser
 

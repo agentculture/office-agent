@@ -1,6 +1,6 @@
 [project]
 name = "office-cli"
-version = "0.3.0"
+version = "0.4.0"
 description = "Office — CLI to manage sittings and meeting rooms in office maps."
 readme = "README.md"
 license = "MIT"
@@ -20,6 +20,7 @@ dependencies = [
 [project.optional-dependencies]
 sheets = ["gspread>=6.0"]
 bamboohr = ["requests>=2.31"]
+slack = ["slack-bolt>=1.18", "slack-sdk>=3.27"]
 
 [project.urls]
 Homepage = "https://github.com/agentculture/office-agent"
