@@ -67,34 +67,48 @@ function pushUrl(office, floor, seat) {
   }
 }
 
-// Allow-list of server paths the frontend is permitted to fetch. Even
-// though every path constructor is already validated against
-// `state.knownFloorIds`, we re-check at the fetch boundary so a future
-// caller cannot accidentally pass a URL-derived value through.
-const SAFE_PATH_RE = /^\/(api\/(offices|floors\/[A-Za-z0-9._-]+)|svgs\/[A-Za-z0-9._-]+\.svg)$/;
+// One fetcher per endpoint, with a hardcoded URL prefix and a
+// regex-validated token. URLs are never built from a generic `path`
+// parameter — that lets the static analyzer (and any reviewer) see at
+// the fetch site that the URL is constructed from constants + a
+// strictly-character-classed token.
+const FLOOR_ID_RE = /^[A-Za-z0-9._-]+$/;
+const SVG_NAME_RE = /^[A-Za-z0-9._-]+\.svg$/;
 
-function assertSafePath(path) {
-  if (typeof path !== "string" || !SAFE_PATH_RE.test(path)) {
-    throw new Error(`refusing to fetch untrusted path: ${path}`);
+function checkResponse(r, label) {
+  if (!r.ok) {
+    throw new Error(`${r.status} ${r.statusText} for ${label}`);
   }
+  return r;
 }
 
-async function fetchJSON(path) {
-  assertSafePath(path);
-  const r = await fetch(path);
-  if (!r.ok) {
-    throw new Error(`${r.status} ${r.statusText} for ${path}`);
-  }
-  return r.json();
+async function fetchOffices() {
+  const r = await fetch("/api/offices");
+  return (await checkResponse(r, "/api/offices")).json();
 }
 
-async function fetchText(path) {
-  assertSafePath(path);
-  const r = await fetch(path);
-  if (!r.ok) {
-    throw new Error(`${r.status} ${r.statusText} for ${path}`);
+async function fetchFloor(floorId) {
+  if (!FLOOR_ID_RE.test(floorId)) {
+    throw new Error(`refusing to fetch floor with unexpected id: ${floorId}`);
   }
-  return r.text();
+  const r = await fetch(`/api/floors/${floorId}`);
+  return (await checkResponse(r, `/api/floors/${floorId}`)).json();
+}
+
+async function fetchSvgByName(svgName) {
+  if (!SVG_NAME_RE.test(svgName)) {
+    throw new Error(`refusing to fetch SVG with unexpected name: ${svgName}`);
+  }
+  const r = await fetch(`/svgs/${svgName}`);
+  return (await checkResponse(r, `/svgs/${svgName}`)).text();
+}
+
+function svgNameFromUrl(svgUrl) {
+  // The server returns ``svg_url: "/svgs/<name>.svg"`` — extract the name
+  // and validate. We do not pass the full URL to fetch().
+  if (typeof svgUrl !== "string") return "";
+  const m = /^\/svgs\/([A-Za-z0-9._-]+\.svg)$/.exec(svgUrl);
+  return m ? m[1] : "";
 }
 
 function searchableSeat(s) {
@@ -312,11 +326,11 @@ function inlineSvg(svgText) {
 
 async function loadFloor(officeId, floorId) {
   // Validate against the offices index so a tainted URL cannot drive a
-  // fetch to an arbitrary path.
+  // fetch to an arbitrary path. fetchFloor itself also validates the id.
   if (!state.knownFloorIds.has(floorId)) {
     throw new Error(`unknown floor: ${floorId}`);
   }
-  const data = await fetchJSON(`/api/floors/${encodeURIComponent(floorId)}`);
+  const data = await fetchFloor(floorId);
   state.currentOfficeId = officeId;
   state.currentFloorId = floorId;
   state.seats = data.seats;
@@ -324,7 +338,11 @@ async function loadFloor(officeId, floorId) {
     ? new globalThis.Fuse(state.seats.map(searchableSeat), FUSE_OPTIONS)
     : null;
 
-  const svgText = await fetchText(data.svg_url);
+  const svgName = svgNameFromUrl(data.svg_url);
+  if (!svgName) {
+    throw new Error(`server returned unexpected svg_url: ${data.svg_url}`);
+  }
+  const svgText = await fetchSvgByName(svgName);
   inlineSvg(svgText);
   applySeatClasses();
 
@@ -336,7 +354,7 @@ async function loadFloor(officeId, floorId) {
 }
 
 async function loadOffices() {
-  const data = await fetchJSON("/api/offices");
+  const data = await fetchOffices();
   state.offices = data.offices;
   state.knownFloorIds = new Set();
   els.floorPicker.replaceChildren();
