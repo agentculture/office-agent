@@ -2,22 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Status
-
-Pre-bootstrap. No source code yet — only this file plus `LICENSE` and `.gitignore`. The full v1 design lives in two GitHub issues — read them before doing any non-trivial work:
-
-- [agentculture/office-agent#2](https://github.com/agentculture/office-agent/issues/2) — Bootstrap office-cli (0.0.1) from the AgentCulture sibling pattern. End-to-end recipe with exact files to fetch from `agentculture/steward` and `agentculture/afi-cli`.
-- [agentculture/office-agent#1](https://github.com/agentculture/office-agent/issues/1) — v1 floor-plan seating system. Splits work between human (Inkscape SVG tracing) and agent (backend, search, Slack `/whereis`).
-
-Issue #2 is the next step. Issue #1 is the product on top of it.
-
 ## What this is
 
 Office — a CLI and backend for managing seat assignments and meeting rooms across office floor plans. Floors are hand-traced SVGs with stable, conformant IDs; assignments are stored in a Google Sheet (v1) or DynamoDB (v2); people are pulled live from BambooHR (never stored locally). Slack `/whereis @user` is the primary user surface; a search-first web map is the secondary one.
 
+The full v1 design lives in two GitHub issues — read them before doing any non-trivial work:
+
+- [agentculture/office-agent#2](https://github.com/agentculture/office-agent/issues/2) — Bootstrap office-cli (0.0.1) from the AgentCulture sibling pattern. **Implemented in this repo.**
+- [agentculture/office-agent#1](https://github.com/agentculture/office-agent/issues/1) — v1 floor-plan seating system. The product on top of this scaffold.
+
 ## Naming surfaces (don't conflate)
 
-The bootstrap issue uses several similar-looking identifiers across surfaces — mixing them silently breaks imports or PyPI:
+The project uses several similar-looking identifiers across surfaces — mixing them silently breaks imports or PyPI:
 
 | Surface             | Value         | Notes                                                  |
 | ------------------- | ------------- | ------------------------------------------------------ |
@@ -27,9 +23,93 @@ The bootstrap issue uses several similar-looking identifiers across surfaces —
 | CLI binary          | `office`      | `[project.scripts]` entry point                        |
 | Error class prefix  | `Office`      | `OfficeError`, not `Office_cliError`                   |
 
-Do **not** blanket-replace `tipalti` or `steward` when porting from sibling repos — substitute per-surface using the table above. Some `steward` references in CI workflows point at the upstream skill source (`raw.githubusercontent.com/agentculture/steward/main/...`) and must stay as-is.
+Do **not** blanket-replace `tipalti` or `steward` when porting from sibling repos — substitute per-surface using the table above. Some `steward` references in CI workflows or skill scripts point at the upstream source (`raw.githubusercontent.com/agentculture/steward/main/...`) and must stay as-is.
 
-## SVG ID contract (the human deliverable)
+## Project shape
+
+```text
+office-agent/
+├── office_cli/                  # Python package (import name)
+│   ├── __init__.py              # __version__ via importlib.metadata("office-cli")
+│   ├── __main__.py              # `python -m office_cli`
+│   ├── cli/
+│   │   ├── __init__.py          # argparse main(); _ArgumentParser override
+│   │   ├── _errors.py           # OfficeError + EXIT_SUCCESS / _USER_ERROR / _ENV_ERROR
+│   │   ├── _output.py           # emit_result / emit_error / emit_diagnostic
+│   │   └── _commands/           # learn, explain, whoami (and future verbs)
+│   └── explain/                 # Markdown catalog for `office explain <path>`
+├── tests/                       # pytest suite (smoke / learn / whoami)
+├── .github/workflows/           # tests.yml, publish.yml
+├── .claude/skills/              # vendored from agentculture/steward
+└── pyproject.toml               # SSoT for version; [project.scripts] entry
+```
+
+Future surfaces (issue #1):
+
+- `floors/<office>-<floor>.svg` — human-traced floor plans (Inkscape)
+- `data/offices.yaml` — office / floor / cluster metadata (capacity, etc.)
+- `seats/assignments.example.csv` — schema example (real data lives in Sheets/DB)
+
+## Build / test / publish
+
+```bash
+uv sync                           # install runtime + dev deps
+uv run pytest -n auto -v          # full suite, parallel
+uv run office --version           # 0.0.1
+uv run office learn               # agent affordance
+uv run office whoami              # auth probe stub
+uv run python -m office_cli       # equivalent to `office`
+
+uv run black --check office_cli tests
+uv run isort --check-only office_cli tests
+uv run flake8 office_cli tests
+uv run bandit -c pyproject.toml -r office_cli
+markdownlint-cli2 "**/*.md" "#node_modules"
+
+steward doctor . --scope self     # portability + skills convention check
+
+uv build                          # produce wheel + sdist
+```
+
+PyPI publishing happens automatically via `.github/workflows/publish.yml`
+on push to `main` (Trusted Publishing — no API tokens). PRs publish a
+`<version>.dev<run>` to TestPyPI for smoke-testing.
+
+**Every PR must bump `pyproject.toml` `version`** — the `version-check` CI
+job fails otherwise. Use the `version-bump` skill:
+
+```bash
+python3 .claude/skills/version-bump/scripts/bump.py patch
+```
+
+## Conventions
+
+- **uv** for dependency and tool management; **hatchling** as the build backend.
+- **pytest-xdist** (`uv run pytest -n auto -v`); coverage via `pytest-cov`; `fail_under = 60`.
+- **black** + **isort** + **flake8** + **bandit** configured in `pyproject.toml` and `.flake8`.
+- **markdownlint-cli2** with repo-local `.markdownlint-cli2.yaml`.
+- **PyPI Trusted Publishing** via `.github/workflows/publish.yml`. The `version-check` CI job enforces a per-PR version bump against `origin/main`.
+- **Keep a Changelog** format in `CHANGELOG.md`; the `version-bump` skill prepends entries automatically.
+
+## Skills convention
+
+`.claude/skills/<name>/` — each skill must have:
+
+1. `SKILL.md` (frontmatter `name` matches directory name)
+2. A sibling `scripts/` directory with the skill's executables
+3. No path dependencies on external checkouts (skill scripts must work on a fresh `git clone`)
+
+`steward doctor . --scope self` enforces all three rules.
+
+Vendored skills (from `agentculture/steward`):
+
+- **Required** (CI- or contract-load-bearing): `version-bump`, `pr-review`, `run-tests`, `gh-issues`
+- **Recommended**: `pypi-maintainer`, `notebooklm`, `sonarclaude`
+
+Per-machine overrides live in `.claude/skills.local.yaml` (git-ignored;
+`.claude/skills.local.yaml.example` is the template).
+
+## SVG ID contract (issue #1 — the human deliverable)
 
 Floor SVGs in `floors/` are the integration boundary between Ori's Inkscape work and the agent's backend. The backend reads `id` attributes off `<rect>` and `<polygon>` elements; nothing else.
 
@@ -44,17 +124,7 @@ Rules: IDs unique within a file; floor number first; cluster letter uppercase; s
 
 `data/offices.yaml` declares cluster capacity per floor; the build should warn if the count of seat IDs in the SVG doesn't match.
 
-## Conventions (incoming, from the sibling pattern)
-
-Once issue #2 lands, the project will use:
-
-- **uv** for dependency and tool management; **hatchling** as the build backend.
-- **pytest-xdist** (`uv run pytest -n auto -v`); flake8 / black / isort / bandit; markdownlint-cli2 with a repo-local `.markdownlint-cli2.yaml`.
-- **PyPI Trusted Publishing** via `.github/workflows/publish.yml`; `version-check` CI job enforces a version bump on every PR against `origin/main`.
-- **Skills** under `.claude/skills/<name>/` — each must have `SKILL.md` and a sibling `scripts/` directory, with no path dependencies on external checkouts. Required skills: `version-bump`, `pr-review`, `run-tests`, `gh-issues`. `steward doctor . --scope self` enforces the convention.
-- **afi-cli** scaffold under `office_cli/cli/` — `_errors.py`, `_output.py`, and `_commands/{learn,explain,whoami}.py` follow a stable contract; copy verbatim with token substitution rather than rewriting.
-
-## Architectural guardrails (from issue #1)
+## Architectural guardrails (issue #1)
 
 Lessons paid for in advance — don't relitigate without a reason:
 
@@ -66,8 +136,11 @@ Lessons paid for in advance — don't relitigate without a reason:
 - **`hidden=TRUE`** rows show as "occupied (private)" to viewers; full details only to the `editor` / `planning` roles.
 - **Out of scope for v1**: hot-desking / desk booking, native mobile app, visitor/badge/sensor integration, in-app SVG editor.
 
-## When picking up issue #2
+## Picking up issue #1
 
-The issue is written to be runnable on any machine — it does not assume sibling checkouts at `../steward` or `../afi-cli`. Fetch from GitHub raw URLs or install the published CLIs (`uv tool install steward-cli afi-cli`). Work on a single feature branch (`bootstrap/sibling-pattern`), open one PR, then run the `pr-review` skill.
-
-Three post-merge tasks must be called out in the PR body for the human (they require UI clicks Claude can't do): configure PyPI + TestPyPI Trusted Publishers for `office-cli`, create the `pypi` and `testpypi` GitHub Environments, and enable branch protection requiring `tests` and `version-check` on `main`.
+The scaffold is in place. New verbs land under `office_cli/cli/_commands/`
+following the same pattern as `whoami` / `learn`: each module exports
+`register(sub)` and a `cmd_<name>(args)` handler returning an `int` exit
+code. Add a corresponding `office_cli/explain/catalog.py` entry and a
+test file under `tests/`. Bump `pyproject.toml` and `CHANGELOG.md` per
+PR (or run the `version-bump` skill).
