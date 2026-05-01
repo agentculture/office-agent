@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080">
+  <!-- Placeholder traced floor used by tests and `office floors validate`.
+       The real floor 5 trace will be produced by Ori in Inkscape per
+       docs/tracing-guide.md. Schema: every <rect class="seat"> has a
+       <floor>-<CLUSTER>-<NN> id; every <polygon class="room"> uses the
+       architect id verbatim. -->
+  <g id="background"/>
+  <g id="seats">
+    <rect id="5-T-01" class="seat" x="120"  y="80"  width="40" height="60"/>
+    <rect id="5-T-02" class="seat" x="180"  y="80"  width="40" height="60"/>
+    <rect id="5-T-03" class="seat" x="240"  y="80"  width="40" height="60"/>
+    <rect id="5-T-04" class="seat" x="120"  y="160" width="40" height="60"/>
+    <rect id="5-T-05" class="seat" x="180"  y="160" width="40" height="60"/>
+    <rect id="5-T-06" class="seat" x="240"  y="160" width="40" height="60"/>
+    <rect id="5-Z-01" class="seat" x="900"  y="80"  width="60" height="80"/>
+    <rect id="5-Z-02" class="seat" x="980"  y="80"  width="60" height="80"/>
+  </g>
+  <g id="rooms">
+    <polygon id="5.18" class="room"
+             points="1400,300 1700,300 1700,500 1400,500"/>
+  </g>
+</svg>

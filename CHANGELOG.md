@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0] - 2026-05-01
+
+### Added
+
+- v1 seating Stage 1 (data + CLI core) per [issue #1](https://github.com/agentculture/office-agent/issues/1).
+- Domain layer: `office_cli.offices`, `office_cli.floors`, `office_cli.seats`,
+  `office_cli.people` packages with frozen dataclass models and a strict
+  ID contract (`SEAT_RE`, `ROOM_RE`).
+- `AssignmentStore` Protocol with a CSV-backed implementation (`CsvStore`)
+  plus an append-only `AuditLog`. `SeatService` enforces "one seat per
+  person globally" and writes audit entries on every mutation.
+- Floor SVG parser and validator (`office_cli.floors.parse_svg`,
+  `validate_floor`) covering the rules in the issue's SVG ID contract:
+  ID format, uniqueness, viewBox, cluster-capacity match.
+- New CLI verbs: `office floors list|validate`, `office seats list|assign|
+  unassign|move|history`, `office whereis EMAIL`. All honor `--json`.
+- Sample data: `data/offices.yaml` (one office, one floor),
+  `floors/tlv-floor-5.svg` (placeholder traced floor, 6 seats + 1 room),
+  `seats/{assignments,audit-log}.example.csv` schema examples.
+- Runtime dependency: `PyYAML>=6.0`. SVG parsing uses the stdlib
+  `xml.etree.ElementTree`; the historical bandit B314/B405 advisories no
+  longer apply (Python's XML parsers were hardened upstream — see
+  [python/cpython#135294](https://github.com/python/cpython/pull/135294)).
+  These bandit checks are skipped via `pyproject.toml`.
+- `docs/architecture.md` documenting Stage 1 scope and the deferred surfaces.
+
 ## [0.0.1] - 2026-05-01
 
 ### Added
