@@ -11,6 +11,17 @@ The Slack listener handles three input shapes:
 This module is pure: it does not import the Slack SDK and never makes
 network calls. All resolution that needs ``users.info`` is done by the
 caller using the parsed user id.
+
+ReDoS safety
+------------
+Slack caps slash-command text at ~3000 characters; we further reject
+input over :data:`_MAX_INPUT_LEN` (256) before any regex runs. The
+email regex is split into a literal-dot-separated label structure
+(``[A-Za-z0-9-]+`` segments + ``\\.`` separators) so the character
+classes do not overlap with the dot — eliminating the polynomial
+backtracking the original ``[A-Za-z0-9.-]+\\.[A-Za-z]{2,}`` form
+exhibited on adversarial inputs like ``a@b.b.b.b…`` without a valid
+TLD.
 """
 
 from __future__ import annotations
@@ -18,8 +29,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+_MAX_INPUT_LEN = 256
 _MENTION_RE = re.compile(r"<@(?P<user_id>[UW][A-Z0-9]+)(?:\|[^>]*)?>")
-_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+# Domain labels intentionally exclude `.` so the literal `\.` separators
+# are unambiguous — no overlapping classes, no super-linear backtracking.
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
 
 
 @dataclass(frozen=True)
@@ -47,9 +61,16 @@ def parse_target(text: str) -> ParsedTarget:
 
     Mention parsing happens *before* email parsing so a "user with
     `<@U123>` profile email" mention does not slip through as plain
-    text. Whitespace-only / empty text → ``self_lookup``.
+    text. Whitespace-only / empty text → ``self_lookup``. Input over
+    :data:`_MAX_INPUT_LEN` short-circuits to a parse failure with the
+    raw input truncated for the response message — defense in depth
+    against runaway regex evaluation, even though both regexes are
+    constructed to run in linear time.
     """
-    stripped = (text or "").strip()
+    raw = text or ""
+    if len(raw) > _MAX_INPUT_LEN:
+        return ParsedTarget(raw=raw[:_MAX_INPUT_LEN] + "…")
+    stripped = raw.strip()
     if not stripped:
         return ParsedTarget(self_lookup=True, raw="")
 
