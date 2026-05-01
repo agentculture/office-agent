@@ -156,9 +156,11 @@ write them to the assignment store. Reasons:
 
 - [Architecture stages — Stage 3](../architecture.md) — PR-by-PR
   record.
-- [SSO + roles](./roles.md) — Slack `/whereis` resolves caller
-  email via `users.info`, then looks up the role in the same
-  directory pipeline.
+- [SSO + roles](./roles.md) — Slack `/whereis` resolves the
+  caller's email via `users.info` and then looks up their role in
+  the `RolesConfig` map (loaded from `data/offices.yaml`); BambooHR
+  is consulted only for the queried subject's identity, not for the
+  caller's role.
 - [Effective-date windows](./effective-dates.md) — auto-vacate
   runs **after** the date filter, so a future-dated assignment to
   an offboarded employee surfaces as vacant in both timeframes.

@@ -5,6 +5,8 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
 ## [0.8.1] - 2026-05-01
 
 ### Added
@@ -13,8 +15,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `docs/features/` — per-feature deep-dive index plus pages for CLI, BambooHR,
   Slack, web map, effective dates, roles, Sheets, DynamoDB, and bi-directional
   sync.
-
-## [Unreleased]
 
 ## [0.8.0] - 2026-05-01
 
