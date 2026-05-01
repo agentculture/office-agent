@@ -28,6 +28,8 @@ service layer.
   seat assignments (CSV-backed in v0.1.0).
 - `office whereis EMAIL` — find a person's seat (CLI mirror of Slack
   `/whereis`).
+- `office slack-serve` — run the Slack `/whereis` Socket Mode listener
+  (requires `pip install office-cli[slack]`).
 
 ## Exit-code policy
 
@@ -45,6 +47,7 @@ service layer.
 - `office explain floors`
 - `office explain seats`
 - `office explain whereis`
+- `office explain slack-serve`
 """
 
 _LEARN = """\
@@ -222,8 +225,8 @@ append-only.
 _WHEREIS = """\
 # office whereis EMAIL
 
-Find a person's current seat by email. The CLI mirror of the (planned)
-Slack `/whereis` slash command — both surfaces call the same
+Find a person's current seat by email. The CLI mirror of the Slack
+`/whereis` slash command — both surfaces call the same
 `SeatService.whereis` underneath.
 
 ## Usage
@@ -233,6 +236,49 @@ Slack `/whereis` slash command — both surfaces call the same
 
 Exits 0 even when no seat is found; the JSON payload reports
 `assignment: null` so callers can disambiguate.
+"""
+
+_SLACK_SERVE = """\
+# office slack-serve
+
+Run the Slack `/whereis` slash-command listener in Socket Mode. Blocks
+until the process is interrupted. Requires the optional `[slack]`
+extra (`pip install office-cli[slack]`).
+
+## Usage
+
+    office slack-serve
+    office slack-serve --bot-token xoxb-... --app-token xapp-...
+    office slack-serve --data-dir /path/to/checkout
+
+## Configuration
+
+Required env (or matching CLI flag):
+
+- `SLACK_BOT_TOKEN` (`xoxb-…`) — bot user token. Needs the `commands`,
+  `users:read.email`, and `chat:write` scopes.
+- `SLACK_APP_TOKEN` (`xapp-…`) — app-level token from the Slack app's
+  Basic Information page (Socket Mode).
+
+Optional:
+
+- `OFFICE_WEB_BASE_URL` — base URL for the web map; when set, the
+  ephemeral response includes a deep-link button to the seat.
+- `OFFICE_DATA_DIR` (or `--data-dir`) — same convention as the rest
+  of the CLI.
+
+## Behavior
+
+- Empty text → looks up the caller's seat (resolves their email via
+  `users.info`).
+- `<@U…>` mention → resolves the mentioned user's email.
+- Plain text containing an email → uses the first email-shaped token.
+- Garbage → ephemeral parse-failed response.
+- Hidden seats (`hidden=TRUE`) render as "occupied (private)" with no
+  email/notes leakage until role gating (Stage 7) lifts the filter for
+  privileged callers.
+
+Responses are **ephemeral** — only the caller sees them.
 """
 
 
@@ -250,4 +296,5 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("seats", "move"): _SEATS_MOVE,
     ("seats", "history"): _SEATS_HISTORY,
     ("whereis",): _WHEREIS,
+    ("slack-serve",): _SLACK_SERVE,
 }

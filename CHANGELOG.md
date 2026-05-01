@@ -7,6 +7,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-01
+
+### Added
+
+- v1 seating Stage 4 — Slack `/whereis` slash command
+  ([#8](https://github.com/agentculture/office-agent/issues/8)). New
+  `office_cli.slack` subpackage wraps `SeatService.whereis` in a
+  `slack_bolt` app and ships a `office slack-serve` CLI verb that
+  blocks on `SocketModeHandler.start()`.
+- New optional extra: `pip install office-cli[slack]` pulls
+  `slack-bolt>=1.18` and `slack-sdk>=3.27`. The package still imports
+  cleanly without it (lazy import inside `_serve.py`).
+- Slash command supports three invocation shapes — `/whereis`
+  (caller's own seat via `users.info`), `/whereis @user`
+  (`<@U…>` mention parsed and resolved to email), and
+  `/whereis email@domain` (plain text fallback).
+- Block Kit response is **ephemeral by default** — only the caller
+  sees the result. A deep-link button to the web map surfaces when
+  `OFFICE_WEB_BASE_URL` is set (Stage 5 placeholder until the map
+  ships).
+- `hidden=TRUE` seats render as "occupied (private)" with no
+  email/notes leakage; full-detail rendering is gated behind Stage 7
+  roles.
+
 ## [0.3.0] - 2026-05-01
 
 ### Added
@@ -105,7 +129,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   preserving the SVG ID contract and architectural guardrails for the v1
   seating system (issue #1).
 
-[Unreleased]: https://github.com/agentculture/office-agent/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/agentculture/office-agent/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/agentculture/office-agent/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/agentculture/office-agent/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/agentculture/office-agent/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/agentculture/office-agent/compare/v0.0.1...v0.1.0

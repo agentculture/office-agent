@@ -1,0 +1,71 @@
+"""Parser tests for the /whereis slash-command argument."""
+
+from __future__ import annotations
+
+import pytest
+
+from office_cli.slack._resolve import parse_target
+
+
+def test_empty_text_is_self_lookup() -> None:
+    target = parse_target("")
+    assert target.self_lookup is True
+    assert target.user_id == ""
+    assert target.email == ""
+
+
+def test_whitespace_only_is_self_lookup() -> None:
+    assert parse_target("   ").self_lookup is True
+    assert parse_target("\t\n").self_lookup is True
+
+
+def test_mention_with_pipe_name() -> None:
+    target = parse_target("<@U12345|alice>")
+    assert target.user_id == "U12345"
+    assert target.email == ""
+    assert target.self_lookup is False
+
+
+def test_mention_without_pipe_name() -> None:
+    target = parse_target("<@U67890>")
+    assert target.user_id == "U67890"
+
+
+def test_mention_takes_precedence_over_email() -> None:
+    """A mention buried in text wins even if the text also has an email."""
+    target = parse_target("<@U123|alice> alice@x.com")
+    assert target.user_id == "U123"
+    assert target.email == ""
+
+
+def test_plain_email() -> None:
+    target = parse_target("alice@tipalti.com")
+    assert target.email == "alice@tipalti.com"
+    assert target.user_id == ""
+
+
+def test_email_with_surrounding_whitespace() -> None:
+    assert parse_target("   alice@tipalti.com   ").email == "alice@tipalti.com"
+
+
+def test_first_email_wins_among_many() -> None:
+    target = parse_target("alice@x.com bob@y.com")
+    assert target.email == "alice@x.com"
+
+
+def test_unparseable_text_marks_failure() -> None:
+    target = parse_target("nope")
+    assert target.ok is False
+    assert target.raw == "nope"
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("a@b.io", "a@b.io"),
+        ("name+tag@sub.example.co", "name+tag@sub.example.co"),
+        ("user.name@x.io", "user.name@x.io"),
+    ],
+)
+def test_email_shapes(text: str, expected: str) -> None:
+    assert parse_target(text).email == expected
