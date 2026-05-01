@@ -11,13 +11,19 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from office_cli._dates import parse_iso_date, today_iso_date
+from office_cli._roles import RolesConfig, role_for_email
 from office_cli.cli._errors import OfficeError
 from office_cli.seats import SeatService
 from office_cli.slack import _blocks
 from office_cli.slack._resolve import ParsedTarget, parse_target
 
 
-def build_app(service: SeatService, *, app: Any | None = None) -> Any:
+def build_app(
+    service: SeatService,
+    *,
+    app: Any | None = None,
+    roles: RolesConfig | None = None,
+) -> Any:
     """Register the ``/whereis`` listener and return the configured app.
 
     If ``app`` is ``None`` we construct a default ``slack_bolt.App``
@@ -34,7 +40,7 @@ def build_app(service: SeatService, *, app: Any | None = None) -> Any:
         ack()
         text = command.get("text", "")
         target = parse_target(text)
-        blocks, label = _resolve_and_lookup(service, client, body, command, target)
+        blocks, label = _resolve_and_lookup(service, client, body, command, target, roles)
         # ``command`` is the slash-command payload and is the canonical
         # source for ``channel_id``/``user_id``; ``body`` is the Bolt-
         # wrapped envelope and may differ in some adapter shapes. Prefer
@@ -55,6 +61,7 @@ def _resolve_and_lookup(
     body: dict,
     command: dict,
     target: ParsedTarget,
+    roles: RolesConfig | None,
 ) -> tuple[list[dict[str, Any]], str]:
     """Resolve a :class:`ParsedTarget` to an email + label and run lookup."""
     if not target.ok:
@@ -68,10 +75,15 @@ def _resolve_and_lookup(
     except OfficeError as err:
         return _blocks.parse_failed(f"{target.as_of} — {err.message}"), "bad date"
 
+    # Resolve the caller's role from their Slack profile email + the roles
+    # config. When ``roles`` is None or the caller's email can't be
+    # fetched, default to viewer (matches Stage 4–6 behavior).
+    role = _resolve_caller_role(client, body, command, roles)
+
     if target.email:
         email = target.email
         label = email
-        return _lookup(service, email, label, as_of=as_of)
+        return _lookup(service, email, label, as_of=as_of, role=role)
 
     user_id = target.user_id or command.get("user_id") or body.get("user_id", "")
     if not user_id:
@@ -83,7 +95,23 @@ def _resolve_and_lookup(
     # When the caller asked about themselves, label as "you"; otherwise
     # use the @-mention so Slack renders the name.
     label = "you" if target.self_lookup else f"<@{user_id}>"
-    return _lookup(service, email, label, as_of=as_of)
+    return _lookup(service, email, label, as_of=as_of, role=role)
+
+
+def _resolve_caller_role(client: Any, body: dict, command: dict, roles: RolesConfig | None) -> str:
+    """Identify the slash-command caller and resolve their role.
+
+    Defaults to viewer when ``roles`` is not configured or when the
+    caller's profile email isn't fetchable. The redaction at the service
+    layer is keyed on this role.
+    """
+    if roles is None:
+        return "viewer"
+    caller_user_id = command.get("user_id") or body.get("user_id", "")
+    if not caller_user_id:
+        return "viewer"
+    email, _reason = _email_from_user_id(client, caller_user_id)
+    return role_for_email(roles, email)
 
 
 def _resolve_as_of(service: SeatService, raw: str) -> str:
@@ -116,13 +144,18 @@ def _lookup(
     label: str,
     *,
     as_of: str | None = None,
+    role: str | None = None,
 ) -> tuple[list[dict[str, Any]], str]:
     # Both blocks and the `text` fallback use ``label`` so we never leak
     # the resolved profile email through the screen-reader / older-client
     # rendering path — it would defeat the redaction the blocks rely on.
-    assignment = service.whereis(email, as_of=as_of)
+    assignment = service.whereis(email, as_of=as_of, role=role)
     if assignment is None:
         return _blocks.no_seat(label), f"no seat for {label}"
-    if assignment.hidden:
+    # Stage 7: a ``redacted=True`` assignment carries the privacy
+    # treatment the service applied for viewer callers. ``hidden`` alone
+    # is no longer enough to gate the private block — editors and
+    # planning callers see hidden seats with full details.
+    if assignment.redacted:
         return _blocks.hidden_private(assignment, target_label=label), "occupied (private)"
     return _blocks.occupied(assignment, target_label=label), f"{label} → {assignment.seat_id}"

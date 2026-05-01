@@ -1,4 +1,4 @@
-# Architecture — v0.6.0 (Stages 1–6)
+# Architecture — v0.7.0 (Stages 1–7)
 
 `office` ships in stages on top of issue
 [#1](https://github.com/agentculture/office-agent/issues/1). This document
@@ -259,13 +259,51 @@ The `effective_from` / `effective_until` columns reserved by Stage 1 +
   with a remediation, and the web routes map that to
   `400 {error, remediation}` via the existing handler.
 
+## Stage 7 — implemented in v0.7.0
+
+SSO + roles ([#11](https://github.com/agentculture/office-agent/issues/11)).
+Three roles: `viewer` (default — sees `hidden=TRUE` seats as
+"occupied (private)"), `editor` (HR/IT — full details on hidden
+seats), `planning` (facilities — same as editor in v1).
+
+- `office_cli/_roles.py`: `RolesConfig`, `resolve_roles`,
+  `role_for_email`, `is_full_access`. Roles map lives in
+  `data/offices.yaml` under a top-level `roles:` block —
+  `editor: [...]` / `planning: [...]` lists of emails. Anything not
+  listed is `viewer`.
+- `SeatService.list_seats(role=...)` and `whereis(role=...)` apply
+  role-aware redaction at view time. `role=None` (CLI default) is
+  unrestricted; `role="viewer"` clears `employee_email` / `notes`
+  on `hidden=TRUE` rows and sets `redacted=True` (a non-persisted
+  view-time flag on `Assignment`). Surface renderers consult
+  `redacted` to render the `"(private)"` placeholder.
+- Web SSO via `office_cli/server/_auth.py` — `OIDCConfig`,
+  `register_auth_routes` (using `authlib.integrations.starlette_client`).
+  When all five env vars (`OIDC_ISSUER`, `OIDC_CLIENT_ID`,
+  `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URL`, `SESSION_SECRET`) are
+  set, the SPA shell route requires auth and unauth browsers are
+  redirected through the IdP.
+- Auth-disabled mode: when OIDC env vars are unset, the server runs
+  without redirects (local dev). Tests use the `X-Test-Role`
+  header to drive role-aware behavior; the header is **only**
+  honored when OIDC is disabled (production sets the env vars and
+  ignores it).
+- Slack `/whereis` resolves the calling user's email via the
+  existing `users.info` flow and looks up their role from
+  `RolesConfig`. The block-level "occupied (private)" path is now
+  gated on `assignment.redacted`, not on `assignment.hidden`, so
+  editor / planning callers see the full block.
+- Audit-log redaction is explicitly out of scope (issue #11) — the
+  audit log is operator-internal and append-only; full data is OK.
+- The planning role's draft-SVG and future-dated visibility carve-outs
+  from issue #1 stay deferred.
+
 ## Deferred surfaces
 
 Each is a separate issue/PR.
 
 | Stage              | Surface                                       | Notes                                                                   |
 | ------------------ | --------------------------------------------- | ----------------------------------------------------------------------- |
-| 7. SSO + roles     | viewer / editor / planning                    | Drives whether `hidden=TRUE` rows expose details.                       |
 | 8. DynamoDB        | `office_cli.seats.DynamoStore`                | Migration script from Sheets, kept identical Protocol.                  |
 
 ## Operating notes

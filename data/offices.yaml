@@ -8,6 +8,16 @@
 # - each cluster declares an integer capacity; the build warns if it does not
 #   match the count of seat ids in the SVG;
 # - rooms list architect ids verbatim (`5.18`).
+#
+# Stage 7 — SSO + roles (issue #11). Optional `roles:` block maps
+# emails to elevated roles. Anything not listed is `viewer` (the default
+# — sees `hidden=TRUE` seats as "occupied (private)"). Example:
+#
+#   roles:
+#     editor:
+#       - "hr-it@tipalti.com"
+#     planning:
+#       - "facilities@tipalti.com"
 
 offices:
   - id: tlv

@@ -7,6 +7,54 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-01
+
+### Added
+
+- v1 seating Stage 7 — SSO + roles
+  ([#11](https://github.com/agentculture/office-agent/issues/11)).
+  Three roles: `viewer` (default — sees `hidden=TRUE` seats as
+  "occupied (private)"), `editor` (HR/IT — full details on hidden
+  seats), `planning` (facilities — same as editor in v1; the
+  draft-SVG and future-dated carve-outs from issue #1 are deferred).
+- New `office_cli._roles` module: `RolesConfig`, `resolve_roles`,
+  `role_for_email`, `is_full_access`. Roles map lives in
+  `data/offices.yaml` under a top-level `roles:` block.
+- `SeatService.list_seats(role=...)` and `whereis(email, role=...)`
+  apply role-aware redaction at view time: viewer callers see hidden
+  rows with cleared `employee_email` / `notes` and `redacted=True`.
+  CLI passes no role and stays unrestricted.
+- New optional extra: `pip install office-cli[sso]` pulls
+  `authlib>=1.3`, `itsdangerous>=2.1`, and `httpx>=0.27`. The
+  package still imports cleanly without it.
+- Web SSO: new `office_cli.server._auth` module with `OIDCConfig`,
+  `resolve_oidc`, `register_auth_routes`, `current_user`. When all
+  five env vars (`OIDC_ISSUER`, `OIDC_CLIENT_ID`,
+  `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URL`, `SESSION_SECRET`) are
+  set, `office serve` enables a SessionMiddleware-backed login flow;
+  unauthenticated browsers are redirected to `/auth/login` and back
+  to the originating URL after callback.
+- Web auth-disabled mode for local dev / tests — when OIDC env vars
+  are unset, the server runs without redirects. An optional
+  `X-Test-Role` header drives role-aware behavior so tests can
+  exercise viewer / editor / planning without sessions. The header
+  is **only** honored when OIDC is disabled.
+- `GET /api/floors/{id}` now returns a `user: {email, role}` field
+  (or `null` when unauthenticated) so the SPA can render the signed-
+  in identity in the header. Stage 7 adds a small `#user-info` slot
+  with a logout button to the SPA shell.
+- Slack `/whereis` resolves the calling user's email via the existing
+  `users.info` flow and looks up their role. Hidden seats render as
+  "occupied (private)" for viewer callers; editor/planning callers
+  see the full block.
+
+### Changed
+
+- `Assignment` gains a non-persisted `redacted: bool = False` flag
+  set by the service when role-aware redaction is applied. CSV /
+  Sheets stores keep their existing column shape (`redacted` is a
+  view-time signal only).
+
 ## [0.6.0] - 2026-05-01
 
 ### Added
@@ -197,7 +245,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   preserving the SVG ID contract and architectural guardrails for the v1
   seating system (issue #1).
 
-[Unreleased]: https://github.com/agentculture/office-agent/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/agentculture/office-agent/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/agentculture/office-agent/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/agentculture/office-agent/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/agentculture/office-agent/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/agentculture/office-agent/compare/v0.3.0...v0.4.0

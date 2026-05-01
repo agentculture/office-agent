@@ -15,6 +15,11 @@ class Assignment:
     notes: str = ""
     effective_from: str = ""
     effective_until: str = ""
+    # View-time flag — set by SeatService when role-aware redaction
+    # blanked the email/notes. Surface renderers consult this to render
+    # "(private)" instead of "(vacant)" for a redacted hidden seat.
+    # Never persisted (CSV/Sheets stores write only their FIELDNAMES).
+    redacted: bool = False
 
     @property
     def is_vacant(self) -> bool:
@@ -30,6 +35,7 @@ class Assignment:
             "notes": self.notes,
             "effective_from": self.effective_from or None,
             "effective_until": self.effective_until or None,
+            "redacted": self.redacted,
         }
 
 
