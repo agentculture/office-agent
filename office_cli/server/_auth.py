@@ -7,9 +7,13 @@ Three modes of operation:
   (or, when an ``X-Test-Role`` header is present, a synthetic test
   user with that role). This is the default for local dev and tests.
 * **Auth enabled** (``oidc`` is an :class:`OIDCConfig`): a signed-cookie
-  session middleware is mounted, ``/auth/login`` /
-  ``/auth/callback`` / ``/auth/logout`` routes register, and
-  ``require_user`` redirects unauthenticated requests to login.
+  session middleware is mounted, and ``/auth/login`` /
+  ``/auth/callback`` / ``/auth/logout`` routes register. The SPA
+  shell route in :mod:`office_cli.server._routes` consults
+  :func:`current_user` and emits a 302 redirect to ``/auth/login`` for
+  anonymous browsers — the actual gate lives there, not in this
+  module, so the auth helpers can be shared between the SPA path and
+  the JSON API (which never redirects, only role-redacts).
 
 The OIDC integration uses :mod:`authlib.integrations.starlette_client`,
 imported lazily so the package loads cleanly without the ``[sso]``
@@ -81,14 +85,24 @@ def resolve_oidc(env: dict[str, str] | None = None) -> OIDCConfig | None:
 
 
 def install_session_middleware(app: Any, oidc: OIDCConfig) -> None:
-    """Register Starlette's signed-cookie SessionMiddleware on ``app``."""
+    """Register Starlette's signed-cookie SessionMiddleware on ``app``.
+
+    Cookie defaults are production-secure: ``Secure`` flag set, lax
+    same-site. Operators behind an HTTP reverse proxy in staging /
+    internal environments can set ``OIDC_COOKIE_SECURE=false`` to drop
+    the ``Secure`` flag — required because browsers reject ``Secure``
+    cookies over HTTP. Default stays ``true`` so a production
+    misconfig fails-closed (no cookie set, login loops) rather than
+    silently sending session bytes over plain HTTP.
+    """
     from starlette.middleware.sessions import SessionMiddleware
 
+    secure = os.environ.get("OIDC_COOKIE_SECURE", "true").strip().lower() != "false"
     app.add_middleware(
         SessionMiddleware,
         secret_key=oidc.session_secret,
         same_site="lax",
-        https_only=True,
+        https_only=secure,
         session_cookie="office_session",
     )
 

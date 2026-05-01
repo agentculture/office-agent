@@ -101,6 +101,54 @@ def test_non_hidden_unaffected_by_role(data_dir: Path) -> None:
             assert seats["5-T-01"]["employee_email"] == "alice@example.com"
 
 
+def test_redacted_field_in_json(data_dir: Path) -> None:
+    """Stage 7 — the API response carries a ``redacted: bool`` flag.
+
+    Frontend clients use it to render ``"(private)"`` vs ``"(vacant)"``
+    correctly under the new Stage 7 semantics where ``hidden=True`` no
+    longer implies viewer-style redaction.
+    """
+    s = _service(data_dir)
+    s.assign("5-T-01", "exec@example.com", hidden=True)
+    s.assign("5-T-02", "alice@example.com")
+    with TestClient(build_app(s, data_dir=data_dir)) as c:
+        viewer_body = c.get("/api/floors/tlv-floor-5", headers={"X-Test-Role": "viewer"}).json()
+        editor_body = c.get("/api/floors/tlv-floor-5", headers={"X-Test-Role": "editor"}).json()
+    viewer_seats = {x["seat_id"]: x for x in viewer_body["seats"]}
+    editor_seats = {x["seat_id"]: x for x in editor_body["seats"]}
+    # Hidden + viewer → redacted: True.
+    assert viewer_seats["5-T-01"]["redacted"] is True
+    # Hidden + editor → redacted: False (full visibility).
+    assert editor_seats["5-T-01"]["redacted"] is False
+    # Non-hidden → redacted: False, regardless of role.
+    assert viewer_seats["5-T-02"]["redacted"] is False
+    assert editor_seats["5-T-02"]["redacted"] is False
+
+
+def test_build_app_auto_resolves_roles_from_yaml(tmp_path: Path) -> None:
+    """``build_app(data_dir=...)`` reads ``roles:`` from ``data/offices.yaml``."""
+    import shutil
+
+    src = Path(__file__).parent / "fixtures"
+    target = tmp_path / "office-data"
+    shutil.copytree(src, target)
+    (target / "seats").mkdir(exist_ok=True)
+    # Append a roles block to the fixture YAML.
+    yaml_path = target / "data" / "offices.yaml"
+    yaml_path.write_text(
+        yaml_path.read_text(encoding="utf-8") + "\nroles:\n  editor:\n    - alice@example.com\n",
+        encoding="utf-8",
+    )
+    s = _service(target)
+    s.assign("5-T-01", "exec@example.com", hidden=True)
+    # No explicit ``roles=`` — build_app auto-resolves from data_dir.
+    with TestClient(build_app(s, data_dir=target)) as c:
+        # No header → anonymous → viewer → redacted.
+        body = c.get("/api/floors/tlv-floor-5").json()
+    seats = {x["seat_id"]: x for x in body["seats"]}
+    assert seats["5-T-01"]["redacted"] is True
+
+
 def test_user_field_null_when_no_session(data_dir: Path) -> None:
     s = _service(data_dir)
     with TestClient(build_app(s, data_dir=data_dir)) as c:

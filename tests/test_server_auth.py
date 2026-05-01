@@ -45,3 +45,52 @@ def test_resolve_treats_blank_as_missing() -> None:
     partial["SESSION_SECRET"] = "   "
     with pytest.raises(OfficeError):
         resolve_oidc(partial)
+
+
+def test_session_cookie_secure_default_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``OIDC_COOKIE_SECURE`` defaults to true (production-secure)."""
+    from starlette.applications import Starlette
+
+    from office_cli.server._auth import install_session_middleware
+
+    monkeypatch.delenv("OIDC_COOKIE_SECURE", raising=False)
+    cfg = OIDCConfig(
+        issuer="https://idp.example.com",
+        client_id="cid",
+        client_secret="csecret",
+        redirect_url="https://office.example.com/auth/callback",
+        session_secret="x" * 32,
+    )
+    app = Starlette()
+    install_session_middleware(app, cfg)
+    # Inspect the user_middleware list — Starlette stores them in order.
+    secure_flags = [
+        mw.kwargs.get("https_only")
+        for mw in app.user_middleware
+        if mw.cls.__name__ == "SessionMiddleware"
+    ]
+    assert secure_flags == [True]
+
+
+def test_session_cookie_secure_opt_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``OIDC_COOKIE_SECURE=false`` lets staging (HTTP) work without a loop."""
+    from starlette.applications import Starlette
+
+    from office_cli.server._auth import install_session_middleware
+
+    monkeypatch.setenv("OIDC_COOKIE_SECURE", "false")
+    cfg = OIDCConfig(
+        issuer="https://idp.example.com",
+        client_id="cid",
+        client_secret="csecret",
+        redirect_url="https://office.example.com/auth/callback",
+        session_secret="x" * 32,
+    )
+    app = Starlette()
+    install_session_middleware(app, cfg)
+    secure_flags = [
+        mw.kwargs.get("https_only")
+        for mw in app.user_middleware
+        if mw.cls.__name__ == "SessionMiddleware"
+    ]
+    assert secure_flags == [False]

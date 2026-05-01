@@ -8,28 +8,40 @@ real Bolt app, so this module never needs the SDK at import time.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Callable
 
 from office_cli._dates import parse_iso_date, today_iso_date
-from office_cli._roles import RolesConfig, role_for_email
+from office_cli._roles import RolesConfig, resolve_roles, role_for_email
 from office_cli.cli._errors import OfficeError
 from office_cli.seats import SeatService
 from office_cli.slack import _blocks
 from office_cli.slack._resolve import ParsedTarget, parse_target
+
+_AUTO = object()
 
 
 def build_app(
     service: SeatService,
     *,
     app: Any | None = None,
-    roles: RolesConfig | None = None,
+    roles: Any = None,
+    data_dir: Path | None = None,
 ) -> Any:
     """Register the ``/whereis`` listener and return the configured app.
 
     If ``app`` is ``None`` we construct a default ``slack_bolt.App``
     (which reads ``SLACK_BOT_TOKEN`` from the env). Tests pass a fake
     app exposing only ``.command(name)``.
+
+    ``roles`` is the role-mapping config. ``None`` (the default) keeps
+    every caller as ``viewer`` — the Stage 4–6 behavior. Pass an
+    explicit :class:`RolesConfig`, or pass ``data_dir`` to auto-resolve
+    from ``data/offices.yaml`` (production path used by ``office
+    slack-serve``).
     """
+    if roles is None and data_dir is not None:
+        roles = resolve_roles(data_dir)
     if app is None:
         from slack_bolt import App
 

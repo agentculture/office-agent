@@ -1,12 +1,19 @@
 """HTTP routes for the seat-map server.
 
 The endpoints are intentionally thin — they map ``SeatService`` /
-``Office`` / ``Floor`` shapes to plain JSON, applying the **server-side
-redaction** for ``hidden=TRUE`` rows so the frontend never sees a
-private email or note.
+``Office`` / ``Floor`` shapes to plain JSON.
 
-Stage 7 will introduce role-based unredaction; until then every caller
-is treated as a ``viewer``.
+Role-aware redaction (Stage 7) is applied at the **service** layer:
+``SeatService.list_seats(role=...)`` clears the email + notes on
+``hidden=TRUE`` rows when the caller's role is ``viewer`` and sets a
+``redacted=True`` flag on the returned :class:`Assignment`. This
+module's :func:`_redact` helper just maps that view-time state onto
+the API JSON shape — the redacted hidden row gets the
+``"(private)"`` placeholder, while editor/planning callers see full
+details with ``redacted=False``.
+
+Anonymous browsers (no session) default to ``viewer`` via
+:func:`office_cli.server._auth.role_from_user`.
 """
 
 from pathlib import Path
@@ -226,6 +233,7 @@ def _redact(a: Assignment) -> dict[str, Any]:
             "employee_email": _PRIVATE_PLACEHOLDER,
             "last_updated": a.last_updated,
             "hidden": True,
+            "redacted": True,
             "notes": "",
             "effective_from": a.effective_from or None,
             "effective_until": a.effective_until or None,
@@ -240,6 +248,7 @@ def _redact(a: Assignment) -> dict[str, Any]:
             "employee_email": a.employee_email or None,
             "last_updated": a.last_updated,
             "hidden": True,
+            "redacted": False,
             "notes": a.notes if a.employee_email else "",
             "effective_from": a.effective_from or None,
             "effective_until": a.effective_until or None,
@@ -250,6 +259,7 @@ def _redact(a: Assignment) -> dict[str, Any]:
         "employee_email": a.employee_email or None,
         "last_updated": a.last_updated,
         "hidden": False,
+        "redacted": False,
         "notes": a.notes,
         "effective_from": a.effective_from or None,
         "effective_until": a.effective_until or None,

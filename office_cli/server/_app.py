@@ -19,25 +19,28 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from office_cli._roles import RolesConfig
+from office_cli._roles import RolesConfig, resolve_roles
 from office_cli.cli._errors import EXIT_ENV_ERROR, OfficeError
 from office_cli.seats import SeatService
 from office_cli.server._auth import (
-    OIDCConfig,
     install_session_middleware,
     register_auth_routes,
+    resolve_oidc,
 )
 from office_cli.server._routes import register_routes
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
 
+_AUTO = object()
+
+
 def build_app(
     service: SeatService,
     *,
     data_dir: Path | None = None,
-    oidc: OIDCConfig | None = None,
-    roles: RolesConfig | None = None,
+    oidc: Any = _AUTO,
+    roles: Any = _AUTO,
 ) -> Any:
     """Construct the FastAPI app for ``service``.
 
@@ -45,9 +48,11 @@ def build_app(
     static SVG content. When omitted, the location is inferred from the
     first floor's ``svg`` path.
 
-    ``oidc`` enables the SSO flow when set. ``None`` keeps auth
-    disabled (dev / tests). ``roles`` is the role-mapping config; when
-    ``None`` everyone is treated as ``viewer``.
+    ``oidc`` enables the SSO flow when set. The default sentinel
+    ``_AUTO`` calls :func:`resolve_oidc` to pick up the env-based
+    configuration; pass ``None`` explicitly to force auth-disabled mode
+    (used by tests). ``roles`` follows the same pattern: ``_AUTO``
+    resolves from ``data/offices.yaml``, ``None`` keeps it empty.
     """
     try:
         from fastapi import FastAPI
@@ -60,6 +65,10 @@ def build_app(
         ) from err
 
     floors_dir = _floors_dir(service, data_dir)
+    if oidc is _AUTO:
+        oidc = resolve_oidc()
+    if roles is _AUTO:
+        roles = resolve_roles(data_dir) if data_dir is not None else RolesConfig()
     app = FastAPI(title="office", docs_url=None, redoc_url=None)
     roles_cfg = roles or RolesConfig()
     if oidc is not None:
