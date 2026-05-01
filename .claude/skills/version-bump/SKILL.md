@@ -54,9 +54,9 @@ Pass via stdin. All fields are optional — only non-empty sections are rendered
 
 ## What it touches
 
-- `pyproject.toml` — the `version = "x.y.z"` field (single source of truth;
-  `steward/__init__.py` reads it via `importlib.metadata`, so there's no
-  separate `__version__` literal to keep in sync).
+- `pyproject.toml` — the `version = "x.y.z"` field (single source of truth
+  for the package version; the package reads it via `importlib.metadata`,
+  so there's no separate `__version__` literal to keep in sync).
 - `CHANGELOG.md` — inserts a new `## [x.y.z] - YYYY-MM-DD` entry at the top.
 
 The script does the rest. Pick a bump type from the diff (patch for fixes,

@@ -18,7 +18,7 @@ the split — do not blanket-replace one token across the codebase.
 
 | Surface             | Value         |
 | ------------------- | ------------- |
-| GitHub repo         | `office-agent`|
+| GitHub repo         | `agentculture/office-agent` |
 | PyPI distribution   | `office-cli`  |
 | Python package      | `office_cli`  |
 | CLI binary          | `office`      |

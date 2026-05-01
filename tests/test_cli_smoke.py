@@ -41,3 +41,21 @@ def test_explain_unknown_path_fails_with_hint(
     err = capsys.readouterr().err
     assert "error:" in err
     assert "hint:" in err
+
+
+def test_unexpected_exception_routed_to_internal_error(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Last-resort wrapper must use EXIT_INTERNAL_ERROR (3), not EXIT_USER_ERROR (1)."""
+    from office_cli.cli import _commands
+
+    def boom(_args: object) -> int:
+        raise RuntimeError("simulated internal failure")
+
+    monkeypatch.setattr(_commands.whoami, "cmd_whoami", boom)
+    rc = main(["whoami"])
+    assert rc == 3
+    err = capsys.readouterr().err
+    assert "error:" in err
+    assert "unexpected" in err
+    assert "RuntimeError" in err

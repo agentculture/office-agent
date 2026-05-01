@@ -34,7 +34,7 @@ office-agent/
 │   ├── __main__.py              # `python -m office_cli`
 │   ├── cli/
 │   │   ├── __init__.py          # argparse main(); _ArgumentParser override
-│   │   ├── _errors.py           # OfficeError + EXIT_SUCCESS / _USER_ERROR / _ENV_ERROR
+│   │   ├── _errors.py           # OfficeError + EXIT_SUCCESS / _USER_ERROR / _ENV_ERROR / _INTERNAL_ERROR
 │   │   ├── _output.py           # emit_result / emit_error / emit_diagnostic
 │   │   └── _commands/           # learn, explain, whoami (and future verbs)
 │   └── explain/                 # Markdown catalog for `office explain <path>`

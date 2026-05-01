@@ -42,7 +42,8 @@ Exit-code policy
   0 success
   1 user-input error (bad flag, bad path, missing arg)
   2 environment / setup error
-  3+ reserved
+  3 internal error (unexpected exception)
+  4+ reserved
 
 More detail
 -----------
@@ -64,6 +65,7 @@ def _as_json_payload() -> dict[str, object]:
             "0": "success",
             "1": "user-input error",
             "2": "environment/setup error",
+            "3": "internal error",
         },
         "json_support": True,
         "explain_pointer": "office explain <path>",

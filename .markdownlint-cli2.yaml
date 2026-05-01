@@ -1,4 +1,4 @@
-# markdownlint-cli2 config for steward.
+# markdownlint-cli2 config for this repository.
 # markdownlint-cli2 stops walking at the git root, so a per-user global
 # config in the home directory isn't picked up from inside the repo.
 # Mirrors the afi-cli / cfafi preset for workspace consistency.

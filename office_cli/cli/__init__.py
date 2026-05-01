@@ -19,7 +19,7 @@ from office_cli import __version__
 from office_cli.cli._commands import explain as _explain_cmd
 from office_cli.cli._commands import learn as _learn_cmd
 from office_cli.cli._commands import whoami as _whoami_cmd
-from office_cli.cli._errors import EXIT_USER_ERROR, OfficeError
+from office_cli.cli._errors import EXIT_INTERNAL_ERROR, EXIT_USER_ERROR, OfficeError
 from office_cli.cli._output import emit_error
 
 
@@ -63,7 +63,7 @@ def _dispatch(args: argparse.Namespace) -> int:
         return err.code
     except Exception as err:  # noqa: BLE001 - last-resort
         wrapped = OfficeError(
-            code=EXIT_USER_ERROR,
+            code=EXIT_INTERNAL_ERROR,
             message=f"unexpected: {err.__class__.__name__}: {err}",
             remediation="file a bug at https://github.com/agentculture/office-agent/issues",
         )

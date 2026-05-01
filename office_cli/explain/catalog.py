@@ -29,7 +29,8 @@ contract.
 - `0` success
 - `1` user-input error
 - `2` environment / setup error
-- `3+` reserved
+- `3` internal error (unexpected exception)
+- `4+` reserved
 
 ## See also
 

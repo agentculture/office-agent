@@ -16,10 +16,12 @@ from dataclasses import dataclass
 # 0  = success
 # 1  = user-input error (bad flag, bad path, missing arg)
 # 2  = environment / setup error
-# 3+ = reserved
+# 3  = internal error (unexpected exception not classified above)
+# 4+ = reserved
 EXIT_SUCCESS = 0
 EXIT_USER_ERROR = 1
 EXIT_ENV_ERROR = 2
+EXIT_INTERNAL_ERROR = 3
 
 
 @dataclass
