@@ -41,7 +41,7 @@ office-agent/
 │   ├── offices/                 # offices.yaml loader + Office/Floor/Cluster/Room
 │   ├── floors/                  # SVG parse + ID contract + validator
 │   ├── seats/                   # AssignmentStore + Csv/Sheets stores + AuditLog + SeatService
-│   ├── people/                  # Employee + EmployeeDirectory (StubDirectory in v0.1.0)
+│   ├── people/                  # Employee + EmployeeDirectory (Stub + BambooHR backends)
 │   └── explain/                 # Markdown catalog for `office explain <path>`
 ├── data/offices.yaml            # office / floor / cluster topology
 ├── floors/                      # human-traced floor SVGs
@@ -58,7 +58,7 @@ office-agent/
 ```bash
 uv sync                           # install runtime + dev deps
 uv run pytest -n auto -v          # full suite, parallel
-uv run office --version           # 0.2.0
+uv run office --version           # 0.3.0
 uv run office learn               # agent affordance
 uv run office whoami              # auth probe stub
 uv run office floors validate floors/tlv-floor-5.svg

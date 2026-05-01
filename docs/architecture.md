@@ -1,4 +1,4 @@
-# Architecture — v0.2.0 (Stage 1 + Stage 2)
+# Architecture — v0.3.0 (Stages 1–3)
 
 `office` ships in stages on top of issue
 [#1](https://github.com/agentculture/office-agent/issues/1). This document
@@ -26,9 +26,12 @@ boundary stays explicit.
    ── validate_floor(svg, floor) → list[Issue]
 ```
 
-`office_cli.people` exposes an `EmployeeDirectory` Protocol with a
-`StubDirectory` that trusts whatever email it receives. The
-`BambooHRDirectory` lands in the BambooHR stage.
+`office_cli.people` exposes an `EmployeeDirectory` Protocol with two
+implementations: `StubDirectory` (default — trusts whatever email it
+receives) and `BambooHRDirectory` (5-min TTL cache; presence in
+BambooHR's `/v1/employees/directory` is the auto-vacate signal). The
+service applies a view-time auto-vacate filter: a seat whose stored
+email is no longer active in the directory renders as vacant.
 
 ## Stage 1 — implemented in v0.1.0
 
@@ -94,13 +97,65 @@ export OFFICE_SHEETS_SA=/abs/or/data-dir-relative/sa.json
 
 The service-account JSON should be **git-ignored**.
 
+## Stage 3 — implemented in v0.3.0
+
+- `office_cli.people.bamboohr.BambooHRDirectory` implements
+  `EmployeeDirectory` against the BambooHR `/v1/employees/directory`
+  endpoint with a 5-minute TTL cache.
+- `RequestsBambooHRClient` is the production adapter; `requests` is
+  imported lazily so installs without the `[bamboohr]` extra still
+  load `office_cli.people` cleanly.
+- `BambooHRClient` Protocol exposes only `fetch_directory()`; tests use
+  a `FakeBambooHRClient` and never need real credentials.
+- **Fail-open**: a refresh failure with a populated cache logs to stderr
+  and serves the previous snapshot. Only a first-fetch failure raises
+  `OfficeError(EXIT_ENV_ERROR)`.
+- **Auto-vacate** is implemented in `SeatService` via
+  `_apply_autovacate`: rows whose stored email is missing from the
+  directory render as vacant in `list_seats` / `whereis`. The store
+  row is **not mutated** — history and the underlying CSV/Sheet stay
+  intact, so reactivating an employee restores the seat without any
+  write.
+- **API token is env-only**: `BAMBOOHR_API_TOKEN` must never be
+  committed to `data/offices.yaml`. The YAML block carries
+  `subdomain` and `cache_ttl_seconds` only.
+
+Install the extra to use BambooHR:
+
+```bash
+pip install office-cli[bamboohr]
+```
+
+Configure either via `data/offices.yaml`:
+
+```yaml
+directory:
+  type: bamboohr
+  bamboohr:
+    subdomain: tipalti
+    cache_ttl_seconds: 300
+```
+
+…plus the API token in the env (never in YAML):
+
+```bash
+export BAMBOOHR_API_TOKEN=...
+```
+
+…or full env override:
+
+```bash
+export OFFICE_DIRECTORY=bamboohr
+export BAMBOOHR_SUBDOMAIN=tipalti
+export BAMBOOHR_API_TOKEN=...
+```
+
 ## Deferred surfaces
 
 Each is a separate issue/PR.
 
 | Stage              | Surface                                       | Notes                                                                   |
 | ------------------ | --------------------------------------------- | ----------------------------------------------------------------------- |
-| 3. BambooHR        | `office_cli.people.BambooHRDirectory`         | Live pull, 5-min cache; auto-vacate on offboarding (the killer feature). |
 | 4. Slack `/whereis`| `office_slack/` Bolt app                      | Imports `SeatService.whereis`; renders Block Kit with deep link.        |
 | 5. Web frontend    | `office_web/` (Vite + a small Python server)  | Search-first map, `?asOf=YYYY-MM-DD`, role-aware `hidden` rendering.    |
 | 6. Effective dates | service-layer `effective_from / _until`       | Columns already exist; the service starts honoring them.                |
