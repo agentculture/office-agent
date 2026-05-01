@@ -1,6 +1,6 @@
 [project]
 name = "office-cli"
-version = "0.7.0"
+version = "0.8.0"
 description = "Office — CLI to manage sittings and meeting rooms in office maps."
 readme = "README.md"
 license = "MIT"
@@ -30,6 +30,7 @@ sso = [
     "itsdangerous>=2.1",
     "httpx>=0.27",
 ]
+dynamo = ["boto3>=1.34"]
 
 [project.urls]
 Homepage = "https://github.com/agentculture/office-agent"
@@ -63,6 +64,10 @@ dev = [
     # against a stub OIDC config; we never hit a real IdP.
     "authlib>=1.3",
     "itsdangerous>=2.1",
+    # Stage 8 — DynamoDB. CI exercises the dynamo store via the
+    # in-memory FakeDynamoClient; we still pull boto3 so the
+    # production import path is sanity-checked at install time.
+    "boto3>=1.34",
 ]
 
 [tool.coverage.run]

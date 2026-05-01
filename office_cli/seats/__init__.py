@@ -41,6 +41,7 @@ __all__ = [
     "DirectoryConfig",
     "SeatService",
     "StorageConfig",
+    "build_backends_for_type",
     "build_service",
 ]
 
@@ -94,6 +95,23 @@ def _build_backends(data_dir: Path, cfg: StorageConfig):
             CsvStore(assignments_csv(data_dir)),
             CsvAuditLog(audit_log_csv(data_dir)),
         )
+    if cfg.type == "dynamo":
+        # Lazy import — boto3 (and therefore the dynamo shim) is optional.
+        from office_cli.seats.dynamo import (
+            Boto3DynamoClient,
+            DynamoAuditLog,
+            DynamoStore,
+        )
+
+        client = Boto3DynamoClient(region=cfg.region)
+        return (
+            DynamoStore(
+                client,
+                table=cfg.table_assignments,
+                cache_ttl_seconds=cfg.cache_ttl_seconds,
+            ),
+            DynamoAuditLog(client, table=cfg.table_audit),
+        )
     # Lazy import — gspread (and therefore the sheets shim) is optional.
     from office_cli.seats.sheets import GspreadClient, SheetsAuditLog, SheetsStore
 
@@ -105,3 +123,15 @@ def _build_backends(data_dir: Path, cfg: StorageConfig):
         SheetsStore(client, cache_ttl_seconds=cfg.cache_ttl_seconds),
         SheetsAuditLog(client),
     )
+
+
+def build_backends_for_type(data_dir: Path, store_type: str) -> tuple[AssignmentStore, AuditLog]:
+    """Resolve a ``StorageConfig`` for ``store_type`` and build (store, audit).
+
+    Used by ``office seats migrate`` and ``office seats sync`` to spin up
+    a source / target pair driven by ``--from`` / ``--to`` flags. Threads
+    the type override into :func:`resolve_storage` directly, so no
+    environment mutation is involved (safe for concurrent use).
+    """
+    cfg = resolve_storage(data_dir, type_override=store_type)
+    return _build_backends(data_dir, cfg)

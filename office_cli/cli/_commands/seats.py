@@ -6,6 +6,8 @@ import argparse
 
 from office_cli._config import add_data_dir_arg, resolve_data_dir
 from office_cli._dates import parse_iso_date, today_iso_date
+from office_cli.cli._commands import migrate as _migrate_cmd
+from office_cli.cli._commands import sync as _sync_cmd
 from office_cli.cli._errors import EXIT_USER_ERROR, OfficeError
 from office_cli.cli._output import emit_result
 from office_cli.seats import build_service
@@ -185,6 +187,10 @@ def register(sub: argparse._SubParsersAction) -> None:
     p_history.add_argument("--json", action="store_true")
     add_data_dir_arg(p_history)
     p_history.set_defaults(func=cmd_history)
+
+    # Stage 8: import/export across backends + bi-directional sync.
+    _migrate_cmd.register(inner)
+    _sync_cmd.register(inner)
 
     p.set_defaults(func=lambda args: _missing_subcommand(p))
 

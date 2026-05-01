@@ -38,6 +38,7 @@ from office_cli.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, OfficeError
 _SHAPE_HINT = "see docs/architecture.md for the expected shape"
 _BAMBOOHR_TTL_MAX_SECONDS = 300
 _PREFIX_SHEETS = "storage.sheets"
+_PREFIX_DYNAMO = "storage.dynamo"
 _PREFIX_BAMBOOHR = "directory.bamboohr"
 
 
@@ -79,34 +80,55 @@ def audit_log_csv(data_dir: Path) -> Path:
 class StorageConfig:
     """Resolved storage backend for the seat service."""
 
-    type: str  # "csv" | "sheets"
+    type: str  # "csv" | "sheets" | "dynamo"
     spreadsheet_id: str = ""
     service_account: Path | None = None
     cache_ttl_seconds: int = 300
+    # Dynamo-specific. Empty for csv / sheets backends.
+    table_assignments: str = ""
+    table_audit: str = ""
+    region: str = ""
 
 
-def resolve_storage(data_dir: Path) -> StorageConfig:
+def resolve_storage(data_dir: Path, *, type_override: str | None = None) -> StorageConfig:
     """Pick the storage backend from offices.yaml + env overrides.
 
     Defaults to ``csv``. Sheets requires both a spreadsheet id and a
     service-account JSON path; we error early if either is missing so
     operators get a clear hint instead of an opaque gspread error.
+
+    ``type_override`` lets callers force a specific backend type
+    (csv / sheets / dynamo) without mutating the environment. The
+    migrate / sync verbs use this to construct source + target pairs.
     """
     yaml_cfg = _read_storage_block(data_dir)
-    store_type = (
-        (os.environ.get("OFFICE_STORE") or _str_field(yaml_cfg, "type", prefix="storage") or "csv")
-        .strip()
-        .lower()
-    )
+    if type_override is not None:
+        store_type = type_override.strip().lower()
+    else:
+        store_type = (
+            (
+                os.environ.get("OFFICE_STORE")
+                or _str_field(yaml_cfg, "type", prefix="storage")
+                or "csv"
+            )
+            .strip()
+            .lower()
+        )
 
     if store_type == "csv":
         return StorageConfig(type="csv")
+
+    if store_type == "dynamo":
+        return _resolve_dynamo(yaml_cfg)
 
     if store_type != "sheets":
         raise OfficeError(
             code=EXIT_USER_ERROR,
             message=f"unknown storage type: {store_type!r}",
-            remediation="set storage.type to 'csv' or 'sheets' in offices.yaml or OFFICE_STORE",
+            remediation=(
+                "set storage.type to 'csv', 'sheets', or 'dynamo' "
+                "in offices.yaml or OFFICE_STORE"
+            ),
         )
 
     sheets_cfg = yaml_cfg.get("sheets")
@@ -146,6 +168,60 @@ def resolve_storage(data_dir: Path) -> StorageConfig:
         type="sheets",
         spreadsheet_id=spreadsheet_id,
         service_account=sa_path,
+        cache_ttl_seconds=ttl,
+    )
+
+
+def _resolve_dynamo(yaml_cfg: dict) -> StorageConfig:
+    """Build a ``type: dynamo`` :class:`StorageConfig` from YAML + env."""
+    dynamo_cfg = yaml_cfg.get("dynamo")
+    if dynamo_cfg is None:
+        dynamo_cfg = {}
+    if not isinstance(dynamo_cfg, dict):
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message="storage.dynamo must be a mapping in offices.yaml",
+            remediation=_SHAPE_HINT,
+        )
+    table_assignments = (
+        os.environ.get("OFFICE_DYNAMO_ASSIGNMENTS")
+        or _str_field(dynamo_cfg, "table_assignments", prefix=_PREFIX_DYNAMO)
+        or ""
+    ).strip()
+    table_audit = (
+        os.environ.get("OFFICE_DYNAMO_AUDIT")
+        or _str_field(dynamo_cfg, "table_audit", prefix=_PREFIX_DYNAMO)
+        or ""
+    ).strip()
+    region = (
+        os.environ.get("OFFICE_DYNAMO_REGION")
+        or _str_field(dynamo_cfg, "region", prefix=_PREFIX_DYNAMO)
+        or ""
+    ).strip()
+    if not table_assignments:
+        raise OfficeError(
+            code=EXIT_ENV_ERROR,
+            message="storage.type=dynamo requires a table_assignments name",
+            remediation="set OFFICE_DYNAMO_ASSIGNMENTS or storage.dynamo.table_assignments",
+        )
+    if not table_audit:
+        raise OfficeError(
+            code=EXIT_ENV_ERROR,
+            message="storage.type=dynamo requires a table_audit name",
+            remediation="set OFFICE_DYNAMO_AUDIT or storage.dynamo.table_audit",
+        )
+    if not region:
+        raise OfficeError(
+            code=EXIT_ENV_ERROR,
+            message="storage.type=dynamo requires an AWS region",
+            remediation="set OFFICE_DYNAMO_REGION or storage.dynamo.region",
+        )
+    ttl = _int_field(dynamo_cfg, "cache_ttl_seconds", 300, prefix=_PREFIX_DYNAMO)
+    return StorageConfig(
+        type="dynamo",
+        table_assignments=table_assignments,
+        table_audit=table_audit,
+        region=region,
         cache_ttl_seconds=ttl,
     )
 

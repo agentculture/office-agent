@@ -7,6 +7,56 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-01
+
+### Added
+
+- v1 seating Stage 8 — DynamoDB store + bi-directional Sheets sync
+  ([#12](https://github.com/agentculture/office-agent/issues/12)).
+  New `office_cli.seats.dynamo` subpackage: `DynamoStore`,
+  `DynamoAuditLog`, `DynamoClient` Protocol, `Boto3DynamoClient`
+  production impl. Same Protocol shape and 5-minute TTL cache as
+  the Sheets store, so the read path is identical across backends.
+- `StorageConfig` extends to `type: "dynamo"` with
+  `table_assignments`, `table_audit`, `region`. Configurable via
+  `data/offices.yaml` `storage.dynamo:` block or env overrides
+  (`OFFICE_DYNAMO_ASSIGNMENTS`, `OFFICE_DYNAMO_AUDIT`,
+  `OFFICE_DYNAMO_REGION`). AWS credentials follow the standard
+  chain (`AWS_PROFILE`, IAM role, etc) — never in YAML.
+- New CLI verb `office seats migrate --from {csv,sheets,dynamo}
+  --to {csv,sheets,dynamo} [--dry-run] [--audit-append] [--json]`
+  for one-shot import/export between any two backends. Idempotent
+  for assignments (upsert by `seat_id`); audit idempotency is
+  target-dependent (Dynamo PK+SK dedups; CSV/Sheets append-only —
+  command bails out if the target audit log is non-empty unless
+  `--audit-append` is passed).
+- New CLI verb `office seats sync --primary {sheets,dynamo}
+  [--dry-run] [--json]` for bi-directional reconciliation between
+  Sheets and Dynamo. Last-write-wins per row by `last_updated`.
+  `--primary` is the tie-breaker when `last_updated` matches but
+  content diverges. Idempotent: re-running converges. Operators
+  run periodically (cron / GitHub Action) to keep the spreadsheet
+  UI and the Dynamo runtime in agreement.
+- `office_cli/seats/_sync.py`: pure `reconcile(left, right, *, primary,
+  ...)` returning a `SyncPlan`. No I/O at the reconciliation layer
+  so unit tests stay fast and surface-neutral.
+- New optional extra: `pip install office-cli[dynamo]` pulls
+  `boto3>=1.34`. Package still imports cleanly without it (lazy
+  `boto3` import inside `Boto3DynamoClient.__init__`).
+- `office_cli.seats.build_backends_for_type(data_dir, store_type)`
+  exposed as a public helper for the migrate / sync verbs.
+
+### Notes
+
+- **Sheets stays a first-class runtime backend.** Stage 8 does not
+  deprecate `OFFICE_STORE=sheets` — operators who prefer the
+  spreadsheet UI as the primary editor can keep using it. The
+  migrate + sync verbs make Sheets and Dynamo interoperable, not
+  exclusive.
+- **GSI on `employee_email`** is documented as Stage-9 hardening.
+  The v1 read path is `scan` + in-memory filter (5-minute cache),
+  matching Sheets behavior exactly.
+
 ## [0.7.0] - 2026-05-01
 
 ### Added
@@ -245,7 +295,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   preserving the SVG ID contract and architectural guardrails for the v1
   seating system (issue #1).
 
-[Unreleased]: https://github.com/agentculture/office-agent/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/agentculture/office-agent/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/agentculture/office-agent/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/agentculture/office-agent/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/agentculture/office-agent/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/agentculture/office-agent/compare/v0.4.0...v0.5.0

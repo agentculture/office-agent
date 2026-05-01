@@ -6,13 +6,14 @@ BambooHR; assignments live in a Google Sheet (v1) or DynamoDB (v2). The
 CLI exposes the same operations as the Slack `/whereis` command and the
 web map.
 
-> **Status — v0.7.0.** Stages 1–7 of the v1 seating system are in:
-> floor SVG parser/validator, CSV / Google Sheets-backed assignment
-> store with append-only audit log, BambooHR-backed `EmployeeDirectory`
-> with the auto-vacate killer feature, CLI verbs (`floors`, `seats`,
-> `whereis`), a Slack `/whereis` slash-command listener, a search-first
-> web map, effective-date enforcement, and SSO + role-aware redaction.
-> DynamoDB lands in Stage 8. See
+> **Status — v0.8.0.** Stages 1–8 of the v1 seating system are in:
+> floor SVG parser/validator, CSV / Google Sheets / DynamoDB-backed
+> assignment store with append-only audit log, BambooHR-backed
+> `EmployeeDirectory` with the auto-vacate killer feature, CLI verbs
+> (`floors`, `seats`, `whereis`), a Slack `/whereis` slash-command
+> listener, a search-first web map, effective-date enforcement,
+> SSO + role-aware redaction, and bi-directional Sheets ↔ Dynamo
+> sync. See
 > [issue #1](https://github.com/agentculture/office-agent/issues/1).
 
 ## Naming surfaces
@@ -162,6 +163,66 @@ shows the same view, deep-linkable.
 `effective_from` / `effective_until` are stored as `YYYY-MM-DD` (date
 precision); `last_updated` and audit-log timestamps stay full ISO-8601.
 Empty bounds mean "always begins" / "no end".
+
+### DynamoDB backend + Sheets sync
+
+`office` ships three storage backends behind a single Protocol: CSV
+(default), Google Sheets, and DynamoDB. They are interchangeable
+runtime backends; pick one via `OFFICE_STORE` or
+`storage.type` in `data/offices.yaml`.
+
+```bash
+pip install office-cli[dynamo]
+export OFFICE_STORE=dynamo
+export OFFICE_DYNAMO_ASSIGNMENTS=office-assignments
+export OFFICE_DYNAMO_AUDIT=office-audit-log
+export OFFICE_DYNAMO_REGION=us-east-1
+# AWS creds via AWS_PROFILE / IAM role / standard chain
+office seats list
+```
+
+YAML:
+
+```yaml
+storage:
+  type: dynamo
+  dynamo:
+    table_assignments: office-assignments
+    table_audit: office-audit-log
+    region: us-east-1
+    cache_ttl_seconds: 300
+```
+
+The `office-assignments` table is keyed on `seat_id`. The
+`office-audit-log` table is keyed on `seat_id` (PK) + `timestamp`
+(SK) so re-running migrations doesn't duplicate audit rows.
+
+#### One-shot import/export
+
+```bash
+# Bootstrap Dynamo from Sheets:
+office seats migrate --from sheets --to dynamo --dry-run   # preview
+office seats migrate --from sheets --to dynamo
+
+# Snapshot Dynamo back to Sheets for offline review:
+office seats migrate --from dynamo --to sheets --audit-append
+```
+
+#### Bi-directional sync (Sheets ↔ Dynamo)
+
+Sheets stays the human-friendly editor; Dynamo is the runtime read
+path. Run `office seats sync` periodically (cron / GitHub Action) to
+reconcile both sides via last-write-wins on `last_updated`:
+
+```bash
+# Pick the tie-breaker side when last_updated matches but content
+# diverges (rare). The reconcile is idempotent — re-running converges.
+office seats sync --primary sheets --dry-run
+office seats sync --primary sheets
+```
+
+The CLI is the supported sync entry point; there is no always-on
+daemon (a Stage-9+ addition if needed).
 
 ### SSO + roles
 
