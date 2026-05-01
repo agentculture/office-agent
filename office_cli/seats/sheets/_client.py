@@ -60,10 +60,12 @@ class GspreadClient:
         return self._spreadsheet
 
     def _worksheet(self, name: str):
+        import gspread
+
         sh = self._open()
         try:
             return sh.worksheet(name)
-        except Exception:  # gspread.WorksheetNotFound or transport
+        except gspread.exceptions.WorksheetNotFound:
             return sh.add_worksheet(title=name, rows=1, cols=10)
 
     def read_rows(self, worksheet: str) -> list[list[str]]:

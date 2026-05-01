@@ -74,3 +74,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `CLAUDE.md` updated to cover the post-bootstrap conventions while
   preserving the SVG ID contract and architectural guardrails for the v1
   seating system (issue #1).
+
+[Unreleased]: https://github.com/agentculture/office-agent/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/agentculture/office-agent/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/agentculture/office-agent/compare/v0.0.1...v0.1.0
+[0.0.1]: https://github.com/agentculture/office-agent/releases/tag/v0.0.1

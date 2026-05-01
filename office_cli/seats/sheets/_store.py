@@ -62,6 +62,9 @@ class SheetsStore:
         self.upsert_many([assignment])
 
     def upsert_many(self, assignments: Iterable[Assignment]) -> None:
+        # Force a fresh read so we don't merge against a TTL-stale snapshot
+        # and clobber rows another writer added during the cache window.
+        self.invalidate()
         existing = {a.seat_id: a for a in self.list()}
         for a in assignments:
             existing[a.seat_id] = a

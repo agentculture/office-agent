@@ -103,6 +103,26 @@ def test_by_email() -> None:
     assert store.by_email("") is None
 
 
+def test_upsert_many_bypasses_cache_to_avoid_clobber() -> None:
+    """Qodo #4: a stale TTL snapshot must not erase concurrent writes.
+
+    Simulate: process A reads, gets a cache. Process B writes a new seat
+    directly to the sheet. Process A then upserts a different seat. The
+    new seat from B must survive A's write.
+    """
+    client = FakeSheetsClient()
+    store_a = SheetsStore(client, cache_ttl_seconds=99999)
+    store_a.upsert(Assignment(seat_id="5-T-01", floor="tlv-floor-5", employee_email="a@x"))
+    # Prime A's cache.
+    _ = store_a.list()
+    # B writes directly to the sheet (concurrent process).
+    client.tabs["assignments"].append(["5-T-99", "tlv-floor-5", "b@x", "", "FALSE", "", "", ""])
+    # A upserts a different seat. Must merge against fresh state, not cache.
+    store_a.upsert(Assignment(seat_id="5-T-02", floor="tlv-floor-5", employee_email="c@x"))
+    surviving = {a.seat_id for a in store_a.list()}
+    assert {"5-T-01", "5-T-02", "5-T-99"} <= surviving
+
+
 def test_audit_append_seeds_header_then_appends() -> None:
     client = FakeSheetsClient()
     audit = SheetsAuditLog(client)
