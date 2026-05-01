@@ -30,6 +30,8 @@ service layer.
   `/whereis`).
 - `office slack-serve` — run the Slack `/whereis` Socket Mode listener
   (requires `pip install office-cli[slack]`).
+- `office serve` — run the FastAPI seat-map web server
+  (requires `pip install office-cli[web]`).
 
 ## Exit-code policy
 
@@ -48,6 +50,7 @@ service layer.
 - `office explain seats`
 - `office explain whereis`
 - `office explain slack-serve`
+- `office explain serve`
 """
 
 _LEARN = """\
@@ -281,6 +284,49 @@ Optional:
 Responses are **ephemeral** — only the caller sees them.
 """
 
+_SERVE = """\
+# office serve
+
+Run the FastAPI seat-map HTTP server. Blocks until the process is
+interrupted. Requires the `[web]` extra
+(`pip install office-cli[web]`).
+
+## Usage
+
+    office serve
+    office serve --host 0.0.0.0 --port 8000
+    office serve --port 0 --data-dir /path/to/checkout
+
+## Configuration
+
+- `--host` — interface to bind. Default `127.0.0.1` (loopback).
+- `--port` — TCP port. Default `8000`. Pass `0` to let the OS pick.
+- `--data-dir` (or `OFFICE_DATA_DIR`) — directory containing
+  `data/offices.yaml`, `floors/`, `seats/`.
+
+## What it serves
+
+- `/api/offices` — list of offices and floors (JSON).
+- `/api/floors/{floor_id}` — merged floor + assignments view (JSON).
+  Hidden seats are server-side redacted (`employee_email = "(private)"`).
+- `/floors/*.svg` — the traced floor SVGs as static files.
+- `/static/*` — the bundled vanilla-JS frontend.
+- `/offices/{id}/floors/{floor_id}` — the SPA shell (the same HTML for
+  every floor; client-side hydration reads the URL).
+
+## Hidden seats
+
+`hidden=TRUE` rows render as "occupied (private)" with the email and
+notes redacted **server-side** — the frontend never receives the
+private values. Stage 7 will lift this for `editor` / `planning`
+callers.
+
+## as-of dates
+
+The frontend parses `?asOf=YYYY-MM-DD` from the URL and surfaces a
+banner. Service-layer enforcement lands in Stage 6.
+"""
+
 
 ENTRIES: dict[tuple[str, ...], str] = {
     (): _ROOT,
@@ -297,4 +343,5 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("seats", "history"): _SEATS_HISTORY,
     ("whereis",): _WHEREIS,
     ("slack-serve",): _SLACK_SERVE,
+    ("serve",): _SERVE,
 }

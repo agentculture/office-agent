@@ -1,4 +1,4 @@
-# Architecture — v0.4.0 (Stages 1–4)
+# Architecture — v0.5.0 (Stages 1–5)
 
 `office` ships in stages on top of issue
 [#1](https://github.com/agentculture/office-agent/issues/1). This document
@@ -189,13 +189,54 @@ SLACK_BOT_TOKEN=xoxb-... SLACK_APP_TOKEN=xapp-... office slack-serve
 
 Required Slack app scopes: `commands`, `users:read.email`, `chat:write`.
 
+## Stage 5 — implemented in v0.5.0
+
+- `office_cli.server` subpackage builds a FastAPI app on top of
+  `SeatService.list_seats`. Routes:
+  - `GET /api/offices` — office/floor topology JSON.
+  - `GET /api/floors/{floor_id}` — merged floor + assignments JSON
+    with **server-side redaction** for `hidden=TRUE` rows
+    (`employee_email = "(private)"`, `notes = ""`).
+  - `GET /floors/*.svg` — the traced floor SVGs as static files.
+  - `GET /static/*` — the bundled vanilla-JS frontend.
+  - `GET /offices/{id}/floors/{floor_id}` — the SPA shell HTML.
+- `office serve [--host H] [--port N] [--data-dir D]` blocks on
+  `uvicorn.run`. Uses the same `build_service` factory as the CLI /
+  Slack — Stages 2 / 3 backends flow through.
+- **Frontend**: vanilla JS, no build step. Single ES module reads
+  the URL, fetches the merged view, inlines the SVG, walks the IDed
+  shapes to set `occupied` / `private` / `highlighted` CSS classes,
+  and runs an in-process Fuse-style fuzzy search across seat IDs and
+  assigned emails.
+- URL is canonical state — `/offices/{id}/floors/{floor_id}?seat={sid}&asOf={date}`.
+  `history.pushState` keeps deep links round-tripping. `?asOf=` is
+  parsed and surfaces a banner; service-layer enforcement is Stage 6.
+- Mobile-responsive (sidebar collapses below 800px).
+- Auto-vacate (Stage 3) flows through unchanged: an offboarded
+  employee's seat renders as vacant in the map.
+
+Install the extra to use the web map:
+
+```bash
+pip install office-cli[web]
+```
+
+Run:
+
+```bash
+office serve --port 8000
+```
+
+The vendored fuzzy-search shim under `office_cli/server/static/vendor/`
+is intentionally minimal — see the README there for when to swap in
+the upstream Fuse.js library.
+
 ## Deferred surfaces
 
 Each is a separate issue/PR.
 
 | Stage              | Surface                                       | Notes                                                                   |
 | ------------------ | --------------------------------------------- | ----------------------------------------------------------------------- |
-| 5. Web frontend    | `office_web/` (Vite + a small Python server)  | Search-first map, `?asOf=YYYY-MM-DD`, role-aware `hidden` rendering.    |
 | 6. Effective dates | service-layer `effective_from / _until`       | Columns already exist; the service starts honoring them.                |
 | 7. SSO + roles     | viewer / editor / planning                    | Drives whether `hidden=TRUE` rows expose details.                       |
 | 8. DynamoDB        | `office_cli.seats.DynamoStore`                | Migration script from Sheets, kept identical Protocol.                  |

@@ -43,6 +43,7 @@ office-agent/
 │   ├── seats/                   # AssignmentStore + Csv/Sheets stores + AuditLog + SeatService
 │   ├── people/                  # Employee + EmployeeDirectory (Stub + BambooHR backends)
 │   ├── slack/                   # `/whereis` Bolt app + Socket Mode runner (optional [slack] extra)
+│   ├── server/                  # FastAPI seat-map server + vanilla-JS frontend (optional [web] extra)
 │   └── explain/                 # Markdown catalog for `office explain <path>`
 ├── data/offices.yaml            # office / floor / cluster topology
 ├── floors/                      # human-traced floor SVGs
@@ -59,7 +60,7 @@ office-agent/
 ```bash
 uv sync                           # install runtime + dev deps
 uv run pytest -n auto -v          # full suite, parallel
-uv run office --version           # 0.4.0
+uv run office --version           # 0.5.0
 uv run office learn               # agent affordance
 uv run office whoami              # auth probe stub
 uv run office floors validate floors/tlv-floor-5.svg
