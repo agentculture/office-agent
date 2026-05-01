@@ -64,7 +64,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
 
     if plan.ties:
         emit_diagnostic(
-            f"sync: {len(plan.ties)} content tie(s) on {primary} side: " f"{', '.join(plan.ties)}"
+            f"sync: {len(plan.ties)} content tie(s) on {primary} side: " + ", ".join(plan.ties)
         )
 
     if args.dry_run:
@@ -115,7 +115,7 @@ def register(parent: argparse._SubParsersAction) -> None:
         "--primary",
         required=True,
         choices=("sheets", "dynamo"),
-        help=("Tie-breaker when last_updated matches on both sides " "but content diverged."),
+        help="Tie-breaker when last_updated matches on both sides but content diverged.",
     )
     p.add_argument(
         "--dry-run",

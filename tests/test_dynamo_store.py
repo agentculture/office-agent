@@ -20,15 +20,14 @@ class FakeDynamoClient:
         self.tables: dict[str, dict[tuple, dict]] = {}
         self.scan_calls = 0
 
-    # Helper — figure out the primary key columns for a table.
-    def _key_cols(self, table: str) -> tuple[str, ...]:
-        # Assignments: PK seat_id only. Audit: PK seat_id + SK timestamp.
-        if table.endswith("-audit") or table.endswith("audit-log") or "audit" in table:
-            return ("seat_id", "timestamp")
-        return ("seat_id",)
-
-    def _key(self, table: str, item: dict) -> tuple:
-        return tuple(item.get(c, "") for c in self._key_cols(table))
+    def _key(self, table: str, item: dict) -> tuple[str, str]:
+        # Always return a (pk, sk) pair. Assignments use SK="" since
+        # they're keyed on seat_id alone; audit tables key on
+        # (seat_id, timestamp). Keeping the shape uniform avoids the
+        # variable-length tuple Sonar S8495 flags.
+        is_audit = "audit" in table
+        sk = item.get("timestamp", "") if is_audit else ""
+        return (item.get("seat_id", ""), sk)
 
     def scan_all(self, table: str) -> list[dict]:
         self.scan_calls += 1
