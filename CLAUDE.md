@@ -38,6 +38,7 @@ office-agent/
 │   │   ├── _output.py           # emit_result / emit_error / emit_diagnostic
 │   │   └── _commands/           # learn, explain, whoami, floors, seats, whereis
 │   ├── _config.py               # resolve_data_dir() / --data-dir / OFFICE_DATA_DIR
+│   ├── _dates.py                # parse_iso_date / today_iso_date / is_effective (Stage 6)
 │   ├── offices/                 # offices.yaml loader + Office/Floor/Cluster/Room
 │   ├── floors/                  # SVG parse + ID contract + validator
 │   ├── seats/                   # AssignmentStore + Csv/Sheets stores + AuditLog + SeatService
@@ -60,7 +61,7 @@ office-agent/
 ```bash
 uv sync                           # install runtime + dev deps
 uv run pytest -n auto -v          # full suite, parallel
-uv run office --version           # 0.5.0
+uv run office --version           # 0.6.0
 uv run office learn               # agent affordance
 uv run office whoami              # auth probe stub
 uv run office floors validate floors/tlv-floor-5.svg
@@ -140,7 +141,7 @@ Lessons paid for in advance — don't relitigate without a reason:
 - **The Google Sheet is the CMS.** Don't build an in-app editor for assignments. Don't build an in-app SVG editor either — Inkscape is the editor for layouts.
 - **Audit log is append-only.** Seat changes never overwrite history; "who used to sit at 5-T-01?" must return chronological history.
 - **Multi-office from day one.** No hardcoded `tlv`. Adding a floor = drop SVG + add `data/offices.yaml` entry, no code change.
-- **Future-dated assignments**: the data model carries `effective_from` / `effective_until` even if the UI ships without it. `?asOf=YYYY-MM-DD` renders the map as of that date.
+- **Future-dated assignments**: the data model carries `effective_from` / `effective_until` and Stage 6 enforces them at the service layer. `office seats assign --from / --until`, `office whereis --as-of`, `office seats list --as-of`, `?asOf=YYYY-MM-DD` on the web map, and a trailing `YYYY-MM-DD` token on Slack `/whereis` all flow through the same window check. `effective_*` is stored as `YYYY-MM-DD` (date precision, no time); `last_updated` and audit timestamps stay full ISO-8601.
 - **`hidden=TRUE`** rows show as "occupied (private)" to viewers; full details only to the `editor` / `planning` roles.
 - **Out of scope for v1**: hot-desking / desk booking, native mobile app, visitor/badge/sensor integration, in-app SVG editor.
 

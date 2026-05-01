@@ -237,6 +237,34 @@ def test_users_info_missing_email_renders_clear_message(data_dir: Path) -> None:
     assert "users:read.email" in text  # remediation hint surfaced
 
 
+def test_trailing_date_filters_via_as_of(data_dir: Path) -> None:
+    """Stage 6 — trailing ``YYYY-MM-DD`` token filters via the effective window."""
+    service = _service_with_active(data_dir, "alice@example.com")
+    service.assign("5-T-01", "alice@example.com", effective_from="2026-07-01")
+    app = build_app(service, app=FakeSlackApp())
+
+    # Before the window — handler should report "no seat".
+    client_pre = FakeSlackClient()
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "alice@example.com 2026-06-30"},
+        client=client_pre,
+    )
+    assert "No seat assigned" in _block_text(_last_blocks(client_pre))
+
+    # Inside the window — the seat should appear.
+    client_post = FakeSlackClient()
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "alice@example.com 2026-07-15"},
+        client=client_post,
+    )
+    text = _block_text(_last_blocks(client_post))
+    assert "5-T-01" in text
+
+
 def test_deep_link_button_when_base_url_set(
     data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

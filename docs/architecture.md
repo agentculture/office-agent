@@ -1,4 +1,4 @@
-# Architecture — v0.5.0 (Stages 1–5)
+# Architecture — v0.6.0 (Stages 1–6)
 
 `office` ships in stages on top of issue
 [#1](https://github.com/agentculture/office-agent/issues/1). This document
@@ -231,13 +231,40 @@ The vendored fuzzy-search shim under `office_cli/server/static/vendor/`
 is intentionally minimal — see the README there for when to swap in
 the upstream Fuse.js library.
 
+## Stage 6 — implemented in v0.6.0
+
+Effective-date enforcement ([#10](https://github.com/agentculture/office-agent/issues/10)).
+The `effective_from` / `effective_until` columns reserved by Stage 1 +
+2 are now read at view time:
+
+- `SeatService.list_seats(as_of=...)` and `SeatService.whereis(email,
+  as_of=...)` filter rows whose window does not contain the requested
+  date. Auto-vacate (Stage 3) runs after the date filter, so a seat
+  assigned to a future-dated employee renders vacant today regardless
+  of directory state.
+- `SeatService.assign(effective_from=..., effective_until=...)`
+  defaults `effective_from` to today (date-only `YYYY-MM-DD`) and
+  leaves `effective_until` open-ended. `validate_window` rejects an
+  inverted `until < from`.
+- All four surfaces honor it: `office seats list --as-of`,
+  `office whereis --as-of`, `office seats assign --from / --until`,
+  the web `?as_of=YYYY-MM-DD` query param, and a trailing
+  `YYYY-MM-DD` token on Slack `/whereis`.
+- Storage shape: `effective_from` / `effective_until` are written as
+  date-only `YYYY-MM-DD`. `last_updated` and audit-log timestamps stay
+  full ISO-8601 wall-clock strings. Pre-Stage-6 rows that wrote a full
+  ISO timestamp into `effective_from` keep working — `is_effective`
+  strips the `T...` suffix before lex comparison.
+- All malformed-date inputs surface as `OfficeError(EXIT_USER_ERROR)`
+  with a remediation, and the web routes map that to
+  `400 {error, remediation}` via the existing handler.
+
 ## Deferred surfaces
 
 Each is a separate issue/PR.
 
 | Stage              | Surface                                       | Notes                                                                   |
 | ------------------ | --------------------------------------------- | ----------------------------------------------------------------------- |
-| 6. Effective dates | service-layer `effective_from / _until`       | Columns already exist; the service starts honoring them.                |
 | 7. SSO + roles     | viewer / editor / planning                    | Drives whether `hidden=TRUE` rows expose details.                       |
 | 8. DynamoDB        | `office_cli.seats.DynamoStore`                | Migration script from Sheets, kept identical Protocol.                  |
 

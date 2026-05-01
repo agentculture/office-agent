@@ -7,6 +7,40 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-01
+
+### Added
+
+- v1 seating Stage 6 — effective-date enforcement + `?asOf=`
+  rendering ([#10](https://github.com/agentculture/office-agent/issues/10)).
+  `SeatService.list_seats` and `SeatService.whereis` honor an optional
+  `as_of` keyword; rows whose `[effective_from, effective_until]`
+  window does not contain the requested date render as vacant.
+- `office_cli._dates` — small helper module with `parse_iso_date`,
+  `today_iso_date`, `is_effective`, and `validate_window`.
+  `OfficeError(EXIT_USER_ERROR)` surfaces every malformed-date input
+  with a clear remediation.
+- New CLI flags: `office seats list --as-of YYYY-MM-DD`,
+  `office whereis EMAIL --as-of YYYY-MM-DD`,
+  `office seats assign SEAT EMAIL --from YYYY-MM-DD --until YYYY-MM-DD`.
+- Web `GET /api/floors/{id}?as_of=YYYY-MM-DD` is honored end-to-end.
+  Malformed dates surface as `400 {error, remediation}` via the
+  existing `OfficeError` handler. The frontend banner copy moves from
+  "as-of dates are not yet enforced (Stage 6)" to
+  "Showing seat map as of YYYY-MM-DD."
+- Slack `/whereis` accepts an optional trailing `YYYY-MM-DD` token —
+  `/whereis alice@x 2026-07-01`, `/whereis @alice 2026-07-01`, and
+  `/whereis 2026-07-01` (self lookup as-of the date) all work.
+
+### Changed
+
+- `SeatService.assign` (and `move`) write `effective_from` as a
+  date-only `YYYY-MM-DD` value (date precision, no time component).
+  `last_updated` and audit-log timestamps stay full ISO-8601 wall-
+  clock strings. Pre-Stage-6 rows that wrote a full ISO timestamp
+  into `effective_from` keep working — `is_effective` strips the
+  `T...` suffix before comparison.
+
 ## [0.5.0] - 2026-05-01
 
 ### Added
@@ -163,7 +197,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   preserving the SVG ID contract and architectural guardrails for the v1
   seating system (issue #1).
 
-[Unreleased]: https://github.com/agentculture/office-agent/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/agentculture/office-agent/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/agentculture/office-agent/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/agentculture/office-agent/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/agentculture/office-agent/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/agentculture/office-agent/compare/v0.2.0...v0.3.0

@@ -36,6 +36,7 @@ const state = {
   knownFloorIds: new Set(),
   currentFloorId: null,
   currentOfficeId: null,
+  currentAsOf: null,
   seats: [],
   fuse: null,
 };
@@ -74,6 +75,7 @@ function pushUrl(office, floor, seat) {
 // strictly-character-classed token.
 const FLOOR_ID_RE = /^[A-Za-z0-9._-]+$/;
 const SVG_NAME_RE = /^[A-Za-z0-9._-]+\.svg$/;
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function checkResponse(r, label) {
   if (!r.ok) {
@@ -87,12 +89,19 @@ async function fetchOffices() {
   return (await checkResponse(r, "/api/offices")).json();
 }
 
-async function fetchFloor(floorId) {
+async function fetchFloor(floorId, asOf) {
   if (!FLOOR_ID_RE.test(floorId)) {
     throw new Error(`refusing to fetch floor with unexpected id: ${floorId}`);
   }
-  const r = await fetch(`/api/floors/${floorId}`);
-  return (await checkResponse(r, `/api/floors/${floorId}`)).json();
+  let url = `/api/floors/${floorId}`;
+  if (asOf) {
+    if (!ISO_DATE_RE.test(asOf)) {
+      throw new Error(`refusing to fetch floor with unexpected as_of: ${asOf}`);
+    }
+    url += `?as_of=${asOf}`;
+  }
+  const r = await fetch(url);
+  return (await checkResponse(r, url)).json();
 }
 
 async function fetchSvgByName(svgName) {
@@ -324,15 +333,17 @@ function inlineSvg(svgText) {
   return svg;
 }
 
-async function loadFloor(officeId, floorId) {
+async function loadFloor(officeId, floorId, asOf) {
   // Validate against the offices index so a tainted URL cannot drive a
-  // fetch to an arbitrary path. fetchFloor itself also validates the id.
+  // fetch to an arbitrary path. fetchFloor itself also validates the id
+  // and as_of.
   if (!state.knownFloorIds.has(floorId)) {
     throw new Error(`unknown floor: ${floorId}`);
   }
-  const data = await fetchFloor(floorId);
+  const data = await fetchFloor(floorId, asOf);
   state.currentOfficeId = officeId;
   state.currentFloorId = floorId;
+  state.currentAsOf = asOf || null;
   state.seats = data.seats;
   state.fuse = globalThis.Fuse
     ? new globalThis.Fuse(state.seats.map(searchableSeat), FUSE_OPTIONS)
@@ -373,7 +384,7 @@ async function loadOffices() {
   els.floorPicker.addEventListener("change", async () => {
     const [officeId, floorId] = els.floorPicker.value.split("|");
     try {
-      await loadFloor(officeId, floorId);
+      await loadFloor(officeId, floorId, urlState().asOf);
       pushUrl(officeId, floorId, null);
     } catch (err) {
       showError(err);
@@ -392,7 +403,7 @@ function showAsOfBanner(date) {
     return;
   }
   els.banner.hidden = false;
-  els.banner.textContent = `as-of ${date} is parsed but not yet enforced (Stage 6).`;
+  els.banner.textContent = `Showing seat map as of ${date}.`;
 }
 
 function showError(err) {
@@ -402,14 +413,18 @@ function showError(err) {
 
 async function syncFromUrl() {
   const u = urlState();
+  if (u.asOf && !ISO_DATE_RE.test(u.asOf)) {
+    showError(new Error(`asOf must be YYYY-MM-DD, got: ${u.asOf}`));
+    return;
+  }
   showAsOfBanner(u.asOf);
   if (!u.office || !u.floor) return;
   if (!state.knownFloorIds.has(u.floor)) {
     showError(new Error(`unknown floor: ${u.floor}`));
     return;
   }
-  if (state.currentFloorId !== u.floor) {
-    await loadFloor(u.office, u.floor);
+  if (state.currentFloorId !== u.floor || state.currentAsOf !== u.asOf) {
+    await loadFloor(u.office, u.floor, u.asOf);
     setFloorPickerValue(u.office, u.floor);
   }
   if (u.seat) {

@@ -65,3 +65,58 @@ def test_list_text_smoke(data_dir: Path, capsys: pytest.CaptureFixture[str]) -> 
     assert rc == 0
     out = capsys.readouterr().out
     assert "5-T-01" in out
+
+
+def test_assign_with_from_and_as_of_filter(
+    data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Issue #10 acceptance — assign --from in the future, then list --as-of."""
+    rc = main(
+        [
+            "seats",
+            "assign",
+            "5-T-01",
+            "alice@example.com",
+            "--from",
+            "2026-07-01",
+            *_data(data_dir),
+        ]
+    )
+    assert rc == 0
+    capsys.readouterr()
+
+    # --as-of before the window: row renders vacant.
+    rc = main(["seats", "list", "--json", "--as-of", "2026-06-30", *_data(data_dir)])
+    assert rc == 0
+    seats = {s["seat_id"]: s for s in json.loads(capsys.readouterr().out)["seats"]}
+    assert seats["5-T-01"]["employee_email"] is None
+
+    # --as-of inside the window: row visible.
+    rc = main(["seats", "list", "--json", "--as-of", "2026-07-15", *_data(data_dir)])
+    assert rc == 0
+    seats = {s["seat_id"]: s for s in json.loads(capsys.readouterr().out)["seats"]}
+    assert seats["5-T-01"]["employee_email"] == "alice@example.com"
+
+
+def test_assign_rejects_inverted_window(data_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(
+        [
+            "seats",
+            "assign",
+            "5-T-01",
+            "alice@example.com",
+            "--from",
+            "2026-08-01",
+            "--until",
+            "2026-07-01",
+            *_data(data_dir),
+        ]
+    )
+    assert rc == 1
+    assert "before" in capsys.readouterr().err
+
+
+def test_list_rejects_malformed_as_of(data_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["seats", "list", "--as-of", "tomorrow", *_data(data_dir)])
+    assert rc == 1
+    assert "--as-of" in capsys.readouterr().err

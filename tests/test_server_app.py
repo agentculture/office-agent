@@ -95,6 +95,34 @@ def test_autovacate_flows_through(data_dir: Path) -> None:
     assert seats["5-T-01"]["employee_email"] is None
 
 
+def test_get_floor_with_as_of_filters(data_dir: Path) -> None:
+    """Stage 6 — the server honors ``?as_of=`` and pipes it into the service."""
+    s = _service(data_dir)
+    s.assign("5-T-01", "alice@example.com", effective_from="2026-07-01")
+    with TestClient(build_app(s, data_dir=data_dir)) as c:
+        # Before the window: row renders vacant.
+        body = c.get("/api/floors/tlv-floor-5?as_of=2026-06-30").json()
+        seats = {x["seat_id"]: x for x in body["seats"]}
+        assert seats["5-T-01"]["employee_email"] is None
+        assert body["as_of"] == "2026-06-30"
+        # Inside the window: row visible.
+        body = c.get("/api/floors/tlv-floor-5?as_of=2026-07-15").json()
+        seats = {x["seat_id"]: x for x in body["seats"]}
+        assert seats["5-T-01"]["employee_email"] == "alice@example.com"
+        # No ``as_of`` at all: as_of in response is null.
+        body = c.get("/api/floors/tlv-floor-5").json()
+        assert body["as_of"] is None
+
+
+def test_get_floor_rejects_malformed_as_of(data_dir: Path) -> None:
+    with _client(data_dir) as c:
+        r = c.get("/api/floors/tlv-floor-5?as_of=tomorrow")
+        assert r.status_code == 400
+        body = r.json()
+        assert "as_of" in body["error"]
+        assert "remediation" in body
+
+
 def test_unknown_floor_returns_404(data_dir: Path) -> None:
     with _client(data_dir) as c:
         r = c.get("/api/floors/no-such-floor")

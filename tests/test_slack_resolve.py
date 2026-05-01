@@ -86,6 +86,36 @@ def test_overlong_input_short_circuits() -> None:
     assert target.raw.endswith("…")  # truncated marker
 
 
+def test_trailing_date_with_email() -> None:
+    target = parse_target("alice@x.com 2026-07-01")
+    assert target.email == "alice@x.com"
+    assert target.as_of == "2026-07-01"
+
+
+def test_trailing_date_with_mention() -> None:
+    target = parse_target("<@U123|alice> 2026-07-01")
+    assert target.user_id == "U123"
+    assert target.as_of == "2026-07-01"
+
+
+def test_trailing_date_only_is_self_lookup() -> None:
+    target = parse_target("2026-07-01")
+    assert target.self_lookup is True
+    assert target.as_of == "2026-07-01"
+
+
+def test_no_trailing_date_means_empty_as_of() -> None:
+    assert parse_target("alice@x.com").as_of == ""
+    assert parse_target("").as_of == ""
+
+
+def test_date_in_middle_not_peeled() -> None:
+    """Only a trailing date is peeled — a mid-string date stays in the text."""
+    target = parse_target("2026-07-01 alice@x.com")
+    assert target.email == "alice@x.com"
+    assert target.as_of == ""
+
+
 def test_redos_pathological_input_completes_quickly() -> None:
     """Adversarial input that would have been polynomial under the old
     `[A-Za-z0-9.-]+\\.[A-Za-z]{2,}` shape now matches/fails in linear

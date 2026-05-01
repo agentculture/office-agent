@@ -61,7 +61,7 @@ def _resolve_and_lookup(
     if target.email:
         email = target.email
         label = email
-        return _lookup(service, email, label)
+        return _lookup(service, email, label, as_of=target.as_of or None)
 
     user_id = target.user_id or command.get("user_id") or body.get("user_id", "")
     if not user_id:
@@ -73,7 +73,7 @@ def _resolve_and_lookup(
     # When the caller asked about themselves, label as "you"; otherwise
     # use the @-mention so Slack renders the name.
     label = "you" if target.self_lookup else f"<@{user_id}>"
-    return _lookup(service, email, label)
+    return _lookup(service, email, label, as_of=target.as_of or None)
 
 
 def _email_from_user_id(client: Any, user_id: str) -> tuple[str, str]:
@@ -90,11 +90,17 @@ def _email_from_user_id(client: Any, user_id: str) -> tuple[str, str]:
     return email, ""
 
 
-def _lookup(service: SeatService, email: str, label: str) -> tuple[list[dict[str, Any]], str]:
+def _lookup(
+    service: SeatService,
+    email: str,
+    label: str,
+    *,
+    as_of: str | None = None,
+) -> tuple[list[dict[str, Any]], str]:
     # Both blocks and the `text` fallback use ``label`` so we never leak
     # the resolved profile email through the screen-reader / older-client
     # rendering path — it would defeat the redaction the blocks rely on.
-    assignment = service.whereis(email)
+    assignment = service.whereis(email, as_of=as_of)
     if assignment is None:
         return _blocks.no_seat(label), f"no seat for {label}"
     if assignment.hidden:
