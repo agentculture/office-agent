@@ -34,12 +34,32 @@ from pathlib import Path
 import yaml
 
 from office_cli.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, OfficeError
+from office_cli.cli._output import emit_diagnostic
 
 _SHAPE_HINT = "see docs/architecture.md for the expected shape"
 _BAMBOOHR_TTL_MAX_SECONDS = 300
 _PREFIX_SHEETS = "storage.sheets"
 _PREFIX_DYNAMO = "storage.dynamo"
 _PREFIX_BAMBOOHR = "directory.bamboohr"
+_BAMBOOHR_GATE_ENV = "OFFICE_BAMBOOHR_ENABLED"
+_GATE_TRUTHY = {"1", "true", "yes", "on"}
+_GATE_FALSY = {"", "0", "false", "no", "off"}
+
+
+def _bamboohr_gate_enabled() -> bool:
+    raw = os.environ.get(_BAMBOOHR_GATE_ENV, "").strip().lower()
+    if raw in _GATE_TRUTHY:
+        return True
+    if raw in _GATE_FALSY:
+        return False
+    raise OfficeError(
+        code=EXIT_USER_ERROR,
+        message=f"unrecognized value for {_BAMBOOHR_GATE_ENV}: {raw!r}",
+        remediation=(
+            f"set {_BAMBOOHR_GATE_ENV} to one of 1/true/yes/on (enable) "
+            "or 0/false/no/off (disable), or unset it"
+        ),
+    )
 
 
 def resolve_data_dir(args: argparse.Namespace | None = None) -> Path:
@@ -340,6 +360,14 @@ def resolve_directory(data_dir: Path) -> DirectoryConfig:
                 "set directory.type to 'stub' or 'bamboohr' in offices.yaml or OFFICE_DIRECTORY"
             ),
         )
+
+    if not _bamboohr_gate_enabled():
+        emit_diagnostic(
+            "warning: BambooHR backend is gated off "
+            f"(set {_BAMBOOHR_GATE_ENV}=1 to enable); "
+            "falling back to stub directory"
+        )
+        return DirectoryConfig(type="stub")
 
     bamboo_cfg = yaml_cfg.get("bamboohr")
     if bamboo_cfg is None:

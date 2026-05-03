@@ -1,6 +1,6 @@
 [project]
 name = "office-cli"
-version = "0.8.1"
+version = "0.9.0"
 description = "Office — CLI to manage sittings and meeting rooms in office maps."
 readme = "README.md"
 license = "MIT"

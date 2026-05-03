@@ -87,10 +87,16 @@ Reads honor a 5-minute TTL cache; writes invalidate it. See
 
 `office` defaults to a no-op `StubDirectory` that trusts whatever email
 it receives. Switch to BambooHR for the auto-vacate killer feature
-(seats render as vacant automatically when an employee is offboarded):
+(seats render as vacant automatically when an employee is offboarded).
+
+> **Note:** the BambooHR backend is gated off by default. Set
+> `OFFICE_BAMBOOHR_ENABLED=1` in addition to the config below; without
+> it, even valid BambooHR settings silently fall back to the stub
+> directory (with a one-line warning to stderr).
 
 ```bash
 pip install office-cli[bamboohr]
+export OFFICE_BAMBOOHR_ENABLED=1   # required: opt in to the gated feature
 export OFFICE_DIRECTORY=bamboohr
 export BAMBOOHR_SUBDOMAIN=tipalti
 export BAMBOOHR_API_TOKEN=...   # env-only — do not commit
