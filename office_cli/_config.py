@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -40,6 +41,12 @@ _BAMBOOHR_TTL_MAX_SECONDS = 300
 _PREFIX_SHEETS = "storage.sheets"
 _PREFIX_DYNAMO = "storage.dynamo"
 _PREFIX_BAMBOOHR = "directory.bamboohr"
+_BAMBOOHR_GATE_ENV = "OFFICE_BAMBOOHR_ENABLED"
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _bamboohr_gate_enabled() -> bool:
+    return os.environ.get(_BAMBOOHR_GATE_ENV, "").strip().lower() in _TRUTHY
 
 
 def resolve_data_dir(args: argparse.Namespace | None = None) -> Path:
@@ -340,6 +347,15 @@ def resolve_directory(data_dir: Path) -> DirectoryConfig:
                 "set directory.type to 'stub' or 'bamboohr' in offices.yaml or OFFICE_DIRECTORY"
             ),
         )
+
+    if not _bamboohr_gate_enabled():
+        print(
+            "warning: BambooHR backend is gated off "
+            f"(set {_BAMBOOHR_GATE_ENV}=1 to enable); "
+            "falling back to stub directory",
+            file=sys.stderr,
+        )
+        return DirectoryConfig(type="stub")
 
     bamboo_cfg = yaml_cfg.get("bamboohr")
     if bamboo_cfg is None:

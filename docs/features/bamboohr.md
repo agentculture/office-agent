@@ -1,5 +1,13 @@
 # BambooHR + auto-vacate
 
+> **Status: gated off by default.** The BambooHR backend is wired
+> end-to-end but disabled at runtime. Even when `directory.type: bamboohr`
+> is set in `offices.yaml` or `OFFICE_DIRECTORY=bamboohr` is exported,
+> the seat service falls back to the `stub` directory and prints a
+> one-line warning to stderr unless `OFFICE_BAMBOOHR_ENABLED=1` is set.
+> All code, configuration plumbing, and tests below remain functional —
+> opt in with the env flag to re-enable.
+
 ## What it is
 
 A BambooHR-backed `EmployeeDirectory` that powers the system's
@@ -47,14 +55,19 @@ directory:
 ```
 
 …and set the API token as an env var (it's a secret — **never**
-in YAML):
+in YAML). You also need to flip the runtime gate:
 
 ```bash
+export OFFICE_BAMBOOHR_ENABLED=1   # required: opt in to the gated feature
 export BAMBOOHR_API_TOKEN=...
 # Optional env overrides:
 export OFFICE_DIRECTORY=bamboohr
 export BAMBOOHR_SUBDOMAIN=tipalti
 ```
+
+Without `OFFICE_BAMBOOHR_ENABLED=1`, the service silently uses the stub
+directory and emits a single `warning: BambooHR backend is gated off …`
+line to stderr.
 
 `cache_ttl_seconds` is capped at 300 (5 minutes) so an offboard
 event can't sit stale for more than that. The cap is enforced in
