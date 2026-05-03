@@ -36,6 +36,10 @@ uv tool install office-cli
 office --version
 ```
 
+For the full setup walkthrough — including how to opt into each optional
+backend (Sheets, DynamoDB, BambooHR, Slack, web map, SSO) — see
+[`docs/setup.md`](docs/setup.md).
+
 ## Use
 
 ```bash
