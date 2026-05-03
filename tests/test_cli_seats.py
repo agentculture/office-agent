@@ -120,3 +120,23 @@ def test_list_rejects_malformed_as_of(data_dir: Path, capsys: pytest.CaptureFixt
     rc = main(["seats", "list", "--as-of", "tomorrow", *_data(data_dir)])
     assert rc == 1
     assert "--as-of" in capsys.readouterr().err
+
+
+def test_bamboohr_gate_off_keeps_stdout_clean(
+    data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Selecting bamboohr without the gate flag must (a) emit the
+    'gated off' warning to stderr and (b) leave stdout JSON parseable
+    (Copilot review on PR #24)."""
+    monkeypatch.delenv("OFFICE_BAMBOOHR_ENABLED", raising=False)
+    monkeypatch.setenv("OFFICE_DIRECTORY", "bamboohr")
+    monkeypatch.setenv("BAMBOOHR_SUBDOMAIN", "tipalti")
+    monkeypatch.setenv("BAMBOOHR_API_TOKEN", "fake")
+    rc = main(["seats", "list", "--json", *_data(data_dir)])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "BambooHR backend is gated off" in captured.err
+    payload = json.loads(captured.out)
+    assert "seats" in payload

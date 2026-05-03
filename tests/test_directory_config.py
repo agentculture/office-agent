@@ -186,7 +186,7 @@ def test_bamboohr_gate_truthy_values(
     assert cfg.type == "bamboohr"
 
 
-@pytest.mark.parametrize("value", ["", "0", "false", "no", "off", "maybe"])
+@pytest.mark.parametrize("value", ["", "0", "false", "no", "off"])
 def test_bamboohr_gate_falsy_values(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: str
 ) -> None:
@@ -196,3 +196,19 @@ def test_bamboohr_gate_falsy_values(
     monkeypatch.setenv("BAMBOOHR_API_TOKEN", "tok")
     cfg = resolve_directory(tmp_path)
     assert cfg.type == "stub"
+
+
+@pytest.mark.parametrize("value", ["ture", "maybe", "enabled", "2"])
+def test_bamboohr_gate_unrecognized_value_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """Typos like 'ture' must fail loudly so operators don't silently
+    lose auto-vacate (Copilot review on PR #24)."""
+    monkeypatch.setenv("OFFICE_BAMBOOHR_ENABLED", value)
+    monkeypatch.setenv("OFFICE_DIRECTORY", "bamboohr")
+    monkeypatch.setenv("BAMBOOHR_SUBDOMAIN", "x")
+    monkeypatch.setenv("BAMBOOHR_API_TOKEN", "tok")
+    with pytest.raises(OfficeError) as exc:
+        resolve_directory(tmp_path)
+    assert "unrecognized value for OFFICE_BAMBOOHR_ENABLED" in exc.value.message
+    assert value in exc.value.message
