@@ -52,7 +52,7 @@ def cmd_slack_serve(args: argparse.Namespace) -> int:
         raise OfficeError(
             code=EXIT_ENV_ERROR,
             message="slack-bolt is not installed",
-            remediation=("install the slack extra: pip install office-cli[slack]"),
+            remediation=("install the slack extra: uv tool install 'office-cli[slack]'"),
         ) from err
     from office_cli.slack import build_app, run_socket_mode
 

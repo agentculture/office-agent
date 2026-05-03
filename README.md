@@ -67,7 +67,7 @@ current working directory. Override with `--data-dir DIR` or
 `audit-log.csv`). To use Google Sheets instead:
 
 ```bash
-pip install office-cli[sheets]
+uv tool install 'office-cli[sheets]'
 export OFFICE_STORE=sheets
 export OFFICE_SHEETS_ID=1abc...
 export OFFICE_SHEETS_SA=/path/to/service-account.json
@@ -99,7 +99,7 @@ it receives. Switch to BambooHR for the auto-vacate killer feature
 > directory (with a one-line warning to stderr).
 
 ```bash
-pip install office-cli[bamboohr]
+uv tool install 'office-cli[bamboohr]'
 export OFFICE_BAMBOOHR_ENABLED=1   # required: opt in to the gated feature
 export OFFICE_DIRECTORY=bamboohr
 export BAMBOOHR_SUBDOMAIN=tipalti
@@ -126,7 +126,7 @@ without any write.
 Run a Slack `/whereis` slash command backed by the same `SeatService`:
 
 ```bash
-pip install office-cli[slack]
+uv tool install 'office-cli[slack]'
 export SLACK_BOT_TOKEN=xoxb-...
 export SLACK_APP_TOKEN=xapp-...
 office slack-serve
@@ -182,7 +182,7 @@ runtime backends; pick one via `OFFICE_STORE` or
 `storage.type` in `data/offices.yaml`.
 
 ```bash
-pip install office-cli[dynamo]
+uv tool install 'office-cli[dynamo]'
 export OFFICE_STORE=dynamo
 export OFFICE_DYNAMO_ASSIGNMENTS=office-assignments
 export OFFICE_DYNAMO_AUDIT=office-audit-log
@@ -242,7 +242,7 @@ are recognized: `viewer` (default — sees `hidden=TRUE` seats as
 seats), and `planning` (facilities — same as editor in v1).
 
 ```bash
-pip install office-cli[sso,web]
+uv tool install 'office-cli[sso,web]'
 export OIDC_ISSUER=https://your-idp.example.com
 export OIDC_CLIENT_ID=office-agent
 export OIDC_CLIENT_SECRET=xxx

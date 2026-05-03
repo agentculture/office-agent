@@ -29,7 +29,7 @@ this app (~500 LOC of JS) the trade-off pays off.
 ## Install
 
 ```bash
-pip install office-cli[web]
+uv tool install 'office-cli[web]'
 ```
 
 The package imports without `fastapi` / `uvicorn`; only `office

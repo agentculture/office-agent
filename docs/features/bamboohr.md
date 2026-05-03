@@ -36,7 +36,7 @@ data is lost.
 ## Install
 
 ```bash
-pip install office-cli[bamboohr]
+uv tool install 'office-cli[bamboohr]'
 ```
 
 The package imports without `requests`; only the `bamboohr`

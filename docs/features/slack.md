@@ -23,7 +23,7 @@ posture conservative (ephemeral by default).
 ## Install
 
 ```bash
-pip install office-cli[slack]
+uv tool install 'office-cli[slack]'
 ```
 
 The package imports without `slack-bolt`; only `office slack-serve`

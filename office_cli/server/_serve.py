@@ -23,6 +23,6 @@ def run_server(app: Any, *, host: str = "127.0.0.1", port: int = 8000) -> None:
         raise OfficeError(
             code=EXIT_ENV_ERROR,
             message="uvicorn is not installed",
-            remediation="install the web extra: pip install office-cli[web]",
+            remediation="install the web extra: uv tool install 'office-cli[web]'",
         ) from err
     uvicorn.run(app, host=host, port=port, log_level="info")

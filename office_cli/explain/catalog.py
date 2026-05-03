@@ -29,9 +29,9 @@ service layer.
 - `office whereis EMAIL` — find a person's seat (CLI mirror of Slack
   `/whereis`).
 - `office slack-serve` — run the Slack `/whereis` Socket Mode listener
-  (requires `pip install office-cli[slack]`).
+  (requires `uv tool install 'office-cli[slack]'`).
 - `office serve` — run the FastAPI seat-map web server
-  (requires `pip install office-cli[web]`).
+  (requires `uv tool install 'office-cli[web]'`).
 
 ## Exit-code policy
 
@@ -246,7 +246,7 @@ _SLACK_SERVE = """\
 
 Run the Slack `/whereis` slash-command listener in Socket Mode. Blocks
 until the process is interrupted. Requires the optional `[slack]`
-extra (`pip install office-cli[slack]`).
+extra (`uv tool install 'office-cli[slack]'`).
 
 ## Usage
 
@@ -289,7 +289,7 @@ _SERVE = """\
 
 Run the FastAPI seat-map HTTP server. Blocks until the process is
 interrupted. Requires the `[web]` extra
-(`pip install office-cli[web]`).
+(`uv tool install 'office-cli[web]'`).
 
 ## Usage
 

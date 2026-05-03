@@ -31,7 +31,7 @@ that idempotently brings both sides into agreement.
 Both backends:
 
 ```bash
-pip install office-cli[sheets,dynamo]
+uv tool install 'office-cli[sheets,dynamo]'
 ```
 
 ## Configure

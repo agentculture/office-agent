@@ -61,7 +61,7 @@ def build_app(
         raise OfficeError(
             code=EXIT_ENV_ERROR,
             message="fastapi is not installed",
-            remediation="install the web extra: pip install office-cli[web]",
+            remediation="install the web extra: uv tool install 'office-cli[web]'",
         ) from err
 
     floors_dir = _floors_dir(service, data_dir)

@@ -17,6 +17,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Cross-links from `README.md` and `docs/features/README.md` pointing
   to the new setup page as the entry point.
 
+### Changed
+
+- All install instructions and remediation strings now use
+  `uv tool install 'office-cli[<extra>]'` instead of `pip install
+  office-cli[<extra>]`, matching the project's uv-first tooling
+  policy. Covers `README.md`, `CONTRIBUTING.md`, `docs/architecture.md`,
+  every `docs/features/*.md`, and the runtime `OfficeError`
+  remediations emitted by the `[sheets]`, `[dynamo]`, `[bamboohr]`,
+  `[slack]`, and `[web]` lazy-import paths.
+
 ## [0.9.0] - 2026-05-03
 
 ### Changed

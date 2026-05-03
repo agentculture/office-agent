@@ -28,7 +28,7 @@ a copy operation**. That constraint shaped the choice of keys.
 ## Install
 
 ```bash
-pip install office-cli[dynamo]
+uv tool install 'office-cli[dynamo]'
 ```
 
 The package imports without `boto3`; only the `dynamo` runtime

@@ -35,7 +35,7 @@ identity in production.
 ## Install
 
 ```bash
-pip install office-cli[web,sso]
+uv tool install 'office-cli[web,sso]'
 ```
 
 Pulls `authlib`, `itsdangerous`, `httpx` (alongside the `[web]`

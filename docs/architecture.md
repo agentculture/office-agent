@@ -73,7 +73,7 @@ email is no longer active in the directory renders as vacant.
 Install the extra to use Sheets:
 
 ```bash
-pip install office-cli[sheets]
+uv tool install 'office-cli[sheets]'
 ```
 
 Configure either via `data/offices.yaml`:
@@ -123,7 +123,7 @@ The service-account JSON should be **git-ignored**.
 Install the extra to use BambooHR:
 
 ```bash
-pip install office-cli[bamboohr]
+uv tool install 'office-cli[bamboohr]'
 ```
 
 Configure either via `data/offices.yaml`:
@@ -178,7 +178,7 @@ export BAMBOOHR_API_TOKEN=...
 Install the extra to use Slack:
 
 ```bash
-pip install office-cli[slack]
+uv tool install 'office-cli[slack]'
 ```
 
 Run:
@@ -218,7 +218,7 @@ Required Slack app scopes: `commands`, `users:read.email`, `chat:write`.
 Install the extra to use the web map:
 
 ```bash
-pip install office-cli[web]
+uv tool install 'office-cli[web]'
 ```
 
 Run:

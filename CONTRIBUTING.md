@@ -110,7 +110,7 @@ follow the lazy-import + optional-extra pattern (see
            raise OfficeError(
                code=EXIT_ENV_ERROR,
                message="mylib is not installed",
-               remediation="install the myfeat extra: pip install office-cli[myfeat]",
+               remediation="install the myfeat extra: uv tool install 'office-cli[myfeat]'",
            ) from err
        ...
    ```

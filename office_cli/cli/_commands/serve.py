@@ -24,7 +24,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         raise OfficeError(
             code=EXIT_ENV_ERROR,
             message="server backend is not installed",
-            remediation="install the web extra: pip install office-cli[web]",
+            remediation="install the web extra: uv tool install 'office-cli[web]'",
         ) from err
 
     app = build_app(service, data_dir=data_dir)
@@ -40,7 +40,7 @@ def register(sub: argparse._SubParsersAction) -> None:
         description=(
             "Blocking FastAPI / Uvicorn HTTP server for the search-first "
             "seat map. Requires the [web] extra "
-            "(pip install office-cli[web])."
+            "(uv tool install 'office-cli[web]')."
         ),
     )
     p.add_argument(

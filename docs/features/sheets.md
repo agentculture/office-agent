@@ -24,7 +24,7 @@ agreement bi-directionally. See [Sheets ↔ Dynamo sync](./sync.md).
 ## Install
 
 ```bash
-pip install office-cli[sheets]
+uv tool install 'office-cli[sheets]'
 ```
 
 The package imports without `gspread`; only the `sheets` runtime
@@ -162,7 +162,7 @@ parallel should know about it.
 | `gspread` error                         | `OfficeError` code             | Remediation surfaced                                       |
 | --------------------------------------- | ------------------------------ | ---------------------------------------------------------- |
 | Missing service-account file            | `EXIT_ENV_ERROR`               | "point OFFICE_SHEETS_SA at a real file"                    |
-| `gspread` import not available          | `EXIT_ENV_ERROR`               | "install the sheets extra: pip install office-cli[sheets]" |
+| `gspread` import not available          | `EXIT_ENV_ERROR`               | "install the sheets extra: uv tool install 'office-cli[sheets]'" |
 | API permission denied (sa not shared)   | `EXIT_ENV_ERROR` (via gspread) | gspread message — the operator usually forgot to share.    |
 | Bad YAML shape (`storage.sheets: nope`) | `EXIT_USER_ERROR`              | "must be a mapping in offices.yaml"                        |
 

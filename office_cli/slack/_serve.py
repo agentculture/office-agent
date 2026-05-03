@@ -34,6 +34,6 @@ def run_socket_mode(app: Any, app_token: str) -> None:
         raise OfficeError(
             code=EXIT_ENV_ERROR,
             message="slack-bolt is not installed",
-            remediation=("install the slack extra: pip install office-cli[slack]"),
+            remediation=("install the slack extra: uv tool install 'office-cli[slack]'"),
         ) from err
     SocketModeHandler(app, app_token).start()

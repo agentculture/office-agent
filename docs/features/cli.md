@@ -45,7 +45,7 @@ Optional extras pull in surface-specific dependencies:
 
 The package imports cleanly without any of the extras — features
 that need a missing dep raise `OfficeError(EXIT_ENV_ERROR)` with a
-clear `pip install office-cli[<extra>]` remediation.
+clear `uv tool install 'office-cli[<extra>]'` remediation.
 
 ## Use
 

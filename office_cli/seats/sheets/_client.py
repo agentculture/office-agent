@@ -44,7 +44,7 @@ class GspreadClient:
             raise OfficeError(
                 code=EXIT_ENV_ERROR,
                 message="gspread is not installed",
-                remediation="install the sheets extra: pip install office-cli[sheets]",
+                remediation="install the sheets extra: uv tool install 'office-cli[sheets]'",
             ) from err
         if not service_account_path.is_file():
             raise OfficeError(

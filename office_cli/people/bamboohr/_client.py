@@ -58,7 +58,7 @@ class RequestsBambooHRClient:
             raise OfficeError(
                 code=EXIT_ENV_ERROR,
                 message="requests is not installed",
-                remediation=("install the bamboohr extra: pip install office-cli[bamboohr]"),
+                remediation=("install the bamboohr extra: uv tool install 'office-cli[bamboohr]'"),
             ) from err
         self._subdomain = subdomain
         self._api_token = api_token

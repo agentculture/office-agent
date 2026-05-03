@@ -40,7 +40,7 @@ class Boto3DynamoClient:
             raise OfficeError(
                 code=EXIT_ENV_ERROR,
                 message="boto3 is not installed",
-                remediation="install the dynamo extra: pip install office-cli[dynamo]",
+                remediation="install the dynamo extra: uv tool install 'office-cli[dynamo]'",
             ) from err
         self._region = region
         self._resource = None
