@@ -4,6 +4,10 @@ Each page below documents one feature surface — what it is, why it
 exists, how to install / configure it, how to use it, and how it
 works under the hood.
 
+**First-time setup?** Start with [`../setup.md`](../setup.md) for the
+quick-start walkthrough and the optional-features index; the pages
+below are deep dives, not entry points.
+
 For the **stage-by-stage implementation history** (how each feature
 got added across PRs), see [`docs/architecture.md`](../architecture.md).
 For the **product-level overview**, see the
