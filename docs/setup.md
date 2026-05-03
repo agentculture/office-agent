@@ -58,7 +58,7 @@ of these extras — install just the ones you intend to use.
 | [BambooHR directory + auto-vacate](./features/bamboohr.md) | `[bamboohr]` | `OFFICE_BAMBOOHR_ENABLED=1` **(gate)** + `OFFICE_DIRECTORY=bamboohr`  | [`bamboohr.md`](./features/bamboohr.md)  |
 | [Slack `/whereis`](./features/slack.md)                    | `[slack]`    | `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN`; run `office slack-serve`       | [`slack.md`](./features/slack.md)        |
 | [Web map server](./features/web-map.md)                    | `[web]`      | run `office serve`                                                    | [`web-map.md`](./features/web-map.md)    |
-| [SSO + roles for the web map](./features/roles.md)         | `[sso]`      | all of `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URL`, `SESSION_SECRET` | [`roles.md`](./features/roles.md) |
+| [SSO + roles for the web map](./features/roles.md)         | `[web,sso]`  | all of `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URL`, `SESSION_SECRET` | [`roles.md`](./features/roles.md) |
 
 Each entry below is the **minimum** to bring the feature up. The deep-dive
 pages cover provider-side setup (GCP service accounts, Slack app config,
@@ -67,7 +67,7 @@ IdP registration), YAML schemas, and operational notes.
 ### Google Sheets store (optional)
 
 ```bash
-pip install office-cli[sheets]
+uv tool install 'office-cli[sheets]'
 export OFFICE_STORE=sheets
 export OFFICE_SHEETS_ID=1abc...                    # spreadsheet ID from URL
 export OFFICE_SHEETS_SA=/path/to/service-account.json
@@ -79,7 +79,7 @@ checklist: [`features/sheets.md`](./features/sheets.md#operator-setup-checklist)
 ### DynamoDB store (optional)
 
 ```bash
-pip install office-cli[dynamo]
+uv tool install 'office-cli[dynamo]'
 export OFFICE_STORE=dynamo
 export OFFICE_DYNAMO_ASSIGNMENTS=office-assignments
 export OFFICE_DYNAMO_AUDIT=office-audit-log
@@ -102,7 +102,7 @@ the wheel into a new environment doesn't accidentally start hitting
 BambooHR with stale credentials.
 
 ```bash
-pip install office-cli[bamboohr]
+uv tool install 'office-cli[bamboohr]'
 export OFFICE_BAMBOOHR_ENABLED=1                   # required: opt in to the gated feature
 export OFFICE_DIRECTORY=bamboohr
 export BAMBOOHR_SUBDOMAIN=tipalti
@@ -121,7 +121,7 @@ feature. Full rationale, TTL cache, and fail-open semantics:
 ### Slack `/whereis` (optional)
 
 ```bash
-pip install office-cli[slack]
+uv tool install 'office-cli[slack]'
 export SLACK_BOT_TOKEN=xoxb-...
 export SLACK_APP_TOKEN=xapp-...
 office slack-serve
@@ -134,7 +134,7 @@ scopes and Socket Mode enabled. Full app-side checklist:
 ### Web map server (optional)
 
 ```bash
-pip install office-cli[web]
+uv tool install 'office-cli[web]'
 office serve                                       # localhost:8000
 office serve --host 0.0.0.0 --port 8080            # bind explicitly
 ```
@@ -145,7 +145,7 @@ Layer SSO on top with `[sso]` (next section). Full server config:
 ### SSO + roles for the web map (optional)
 
 ```bash
-pip install office-cli[web,sso]
+uv tool install 'office-cli[web,sso]'
 export OIDC_ISSUER=https://your-idp.example.com
 export OIDC_CLIENT_ID=office-agent
 export OIDC_CLIENT_SECRET=...
