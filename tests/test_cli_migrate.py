@@ -471,9 +471,26 @@ def test_migrate_reports_target_orphans_without_deleting_them(
     assert summary["assignments_unchanged"] == _FIXTURE_SEAT_COUNT
     assert summary["assignments_new"] == 0
 
-    # Stale row must still be in the target (not deleted by dry-run).
-    monkeypatch.setenv("OFFICE_STORE", "dynamo")
-    rc = main(["seats", "history", "stale-X-99", "--json", *_data(dynamo_data_dir)])
-    # The history call may return empty; the important check is that the
-    # row exists in the assignments store.
-    capsys.readouterr()
+    # Re-run dry-run; orphan count still 1 → row was not deleted by the
+    # first dry-run. (``seats list`` would filter the orphan out at the
+    # SVG-join layer, so we can't use it as the witness here — the
+    # dry-run's own ``assignments_target_orphans`` is the load-bearing
+    # signal that the row remains in the store.)
+    rc = main(
+        [
+            "seats",
+            "migrate",
+            "--from",
+            "csv",
+            "--to",
+            "dynamo",
+            "--dry-run",
+            "--json",
+            *_data(dynamo_data_dir),
+        ]
+    )
+    assert rc == 0
+    summary2 = json.loads(capsys.readouterr().out)
+    assert (
+        summary2["assignments_target_orphans"] == 1
+    ), "target orphan disappeared between dry-runs; migrate must never delete rows"

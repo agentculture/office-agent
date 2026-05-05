@@ -19,15 +19,26 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import Iterator
 
 from office_cli._config import add_data_dir_arg, resolve_data_dir
 from office_cli.cli._errors import EXIT_USER_ERROR, OfficeError
 from office_cli.cli._output import emit_diagnostic, emit_result
 from office_cli.floors import parse_svg
-from office_cli.offices import load_offices
+from office_cli.offices import Floor, load_offices
 from office_cli.seats import Assignment, build_backends_for_type
 
 _VALID_TYPES = ("csv", "sheets", "dynamo")
+
+
+def _floor_assignable_ids(floor: Floor) -> Iterator[str]:
+    """Every assignable id declared by a single floor: SVG ``seat_ids``,
+    SVG ``room_ids``, and YAML-declared rooms (in that order)."""
+    if floor.svg.is_file():
+        svg = parse_svg(floor.svg)
+        yield from svg.seat_ids
+        yield from svg.room_ids
+    yield from floor.rooms
 
 
 def _load_all_assignable_ids(data_dir: Path) -> list[tuple[str, str]]:
@@ -40,18 +51,10 @@ def _load_all_assignable_ids(data_dir: Path) -> list[tuple[str, str]]:
     seen: set[str] = set()
     for office in load_offices(data_dir).values():
         for floor_id, floor in office.floors.items():
-            if floor.svg.is_file():
-                svg = parse_svg(floor.svg)
-                for sid in (*svg.seat_ids, *svg.room_ids):
-                    if sid not in seen:
-                        seen.add(sid)
-                        out.append((sid, floor_id))
-            # Rooms declared in YAML even without an SVG entry are still
-            # assignable.
-            for rid in floor.rooms:
-                if rid not in seen:
-                    seen.add(rid)
-                    out.append((rid, floor_id))
+            for sid in _floor_assignable_ids(floor):
+                if sid not in seen:
+                    seen.add(sid)
+                    out.append((sid, floor_id))
     return out
 
 
