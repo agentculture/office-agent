@@ -169,7 +169,7 @@ store in v0.1.0 is a stand-in for the Sheets-backed store coming next.
 - `office seats list [--floor F] [--cluster L] [--vacant|--occupied] [--json]`
 - `office seats assign SEAT EMAIL [--note N] [--hidden] [--json]`
 - `office seats unassign SEAT [--note N] [--json]`
-- `office seats move EMAIL NEW_SEAT [--note N] [--json]`
+- `office seats move NEW_SEAT EMAIL [--note N] [--json]`
 - `office seats history SEAT [--json]`
 
 ## Invariants
@@ -206,7 +206,11 @@ timestamp.
 
 ## Usage
 
-    office seats move alice@tipalti.com 5-T-02
+    office seats move 5-T-02 alice@tipalti.com
+
+Argument order matches `assign`: seat first, email second. Passing the
+opposite order (`alice@tipalti.com 5-T-02`) is rejected with a
+remediation hint rather than a confusing "unknown seat" error.
 
 Fails if the email has no current seat (use `assign`) or if the target
 seat is occupied.

@@ -85,9 +85,25 @@ def cmd_unassign(args: argparse.Namespace) -> int:
 
 
 def cmd_move(args: argparse.Namespace) -> int:
+    # Args mirror ``assign``'s ``seat_id email``. If someone passes them
+    # the other way round (a leftover from the pre-0.9.6 signature, or
+    # the issue-#30 muscle memory), catch the swap and remediate before
+    # we hit the service.
+    if "@" in args.seat_id and "@" not in args.email:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=(
+                f"first argument {args.seat_id!r} looks like an email; "
+                f"second argument {args.email!r} looks like a seat id"
+            ),
+            remediation=(
+                f"office seats move expects: <seat_id> <email>; try: "
+                f"office seats move {args.email} {args.seat_id}"
+            ),
+        )
     data_dir = resolve_data_dir(args)
     service = build_service(data_dir)
-    a = service.move(args.email, args.new_seat_id, note=args.note or "")
+    a = service.move(args.email, args.seat_id, note=args.note or "")
     _emit_assignment(a, args.json, "moved")
     return 0
 
@@ -175,8 +191,8 @@ def register(sub: argparse._SubParsersAction) -> None:
     p_unassign.set_defaults(func=cmd_unassign)
 
     p_move = inner.add_parser("move", help="Atomically move an employee to a new seat.")
-    p_move.add_argument("email")
-    p_move.add_argument("new_seat_id")
+    p_move.add_argument("seat_id", help="Target seat id (where the employee will land).")
+    p_move.add_argument("email", help="Employee email of the person being moved.")
     p_move.add_argument("--note", help=_NOTE_HELP)
     p_move.add_argument("--json", action="store_true")
     add_data_dir_arg(p_move)

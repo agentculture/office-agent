@@ -32,12 +32,14 @@ def test_double_assign_emits_error(data_dir: Path, capsys: pytest.CaptureFixture
     captured = capsys.readouterr()
     assert "already assigned" in captured.err
     assert "hint:" in captured.err
+    # Remediation must reflect the post-0.9.6 ``move`` order (seat first).
+    assert "office seats move 5-T-02 alice@example.com" in captured.err
 
 
 def test_move_atomic(data_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
     main(["seats", "assign", "5-T-01", "alice@example.com", *_data(data_dir)])
     capsys.readouterr()
-    rc = main(["seats", "move", "alice@example.com", "5-T-02", *_data(data_dir)])
+    rc = main(["seats", "move", "5-T-02", "alice@example.com", *_data(data_dir)])
     assert rc == 0
     capsys.readouterr()
     rc = main(["seats", "history", "5-T-01", "--json", *_data(data_dir)])
@@ -45,6 +47,28 @@ def test_move_atomic(data_dir: Path, capsys: pytest.CaptureFixture[str]) -> None
     payload = json.loads(capsys.readouterr().out)
     actions = [e["action"] for e in payload["history"]]
     assert actions == ["assign", "unassign"]
+
+
+def test_move_rejects_swapped_order_with_hint(
+    data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Issue #30: passing ``email seat`` (the pre-0.9.6 ``move`` order)
+    is rejected with a remediation that shows the correct order,
+    instead of the previous misleading
+    "unknown seat: alice@example.com" error."""
+    main(["seats", "assign", "5-T-01", "alice@example.com", *_data(data_dir)])
+    capsys.readouterr()
+    rc = main(["seats", "move", "alice@example.com", "5-T-02", *_data(data_dir)])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "looks like an email" in err
+    assert "office seats move 5-T-02 alice@example.com" in err
+    # Service was not invoked — no audit row written for the bogus call.
+    rc = main(["seats", "history", "5-T-01", "--json", *_data(data_dir)])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    actions = [e["action"] for e in payload["history"]]
+    assert actions == ["assign"]
 
 
 def test_unassign(data_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:

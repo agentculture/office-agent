@@ -74,7 +74,7 @@ office seats assign 5-T-01 alice@example.com --hidden --note "ergonomic"
 office seats assign 5-T-01 alice@example.com --from 2026-07-01 --until 2026-12-31
 
 office seats unassign 5-T-01
-office seats move alice@example.com 5-T-02
+office seats move 5-T-02 alice@example.com
 office seats history 5-T-01 --json
 ```
 
