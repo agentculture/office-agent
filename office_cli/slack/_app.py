@@ -13,7 +13,7 @@ from typing import Any, Callable
 
 from office_cli._dates import parse_iso_date, today_iso_date
 from office_cli._roles import RolesConfig, resolve_roles, role_for_email
-from office_cli.cli._errors import OfficeError
+from office_cli.cli._errors import EXIT_ENV_ERROR, OfficeError
 from office_cli.seats import SeatService
 from office_cli.slack import _blocks
 from office_cli.slack._resolve import ParsedTarget, parse_target
@@ -27,6 +27,7 @@ def build_app(
     app: Any | None = None,
     roles: Any = None,
     data_dir: Path | None = None,
+    command_name: str = "/whereis",
 ) -> Any:
     """Register the ``/whereis`` listener and return the configured app.
 
@@ -39,7 +40,19 @@ def build_app(
     explicit :class:`RolesConfig`, or pass ``data_dir`` to auto-resolve
     from ``data/offices.yaml`` (production path used by ``office
     slack-serve``).
+
+    ``command_name`` overrides the slash-command label the listener
+    binds to. The default ``/whereis`` matches the project identity;
+    operators whose workspace already owns ``/whereis`` (e.g. another
+    app) can rebind by setting ``OFFICE_SLACK_COMMAND`` on the
+    ``slack-serve`` entry point. Must start with ``/``.
     """
+    if not command_name.startswith("/"):
+        raise OfficeError(
+            code=EXIT_ENV_ERROR,
+            message=f"command_name must start with '/': got {command_name!r}",
+            remediation="set OFFICE_SLACK_COMMAND=/your-command (leading slash required).",
+        )
     if roles is None and data_dir is not None:
         roles = resolve_roles(data_dir)
     if app is None:
@@ -47,7 +60,7 @@ def build_app(
 
         app = App()
 
-    @app.command("/whereis")
+    @app.command(command_name)
     def _handle_whereis(ack: Callable[[], None], body: dict, command: dict, client: Any) -> None:
         ack()
         text = command.get("text", "")

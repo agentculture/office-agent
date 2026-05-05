@@ -447,3 +447,34 @@ def test_payload_is_json_serializable(data_dir: Path) -> None:
         client=client,
     )
     json.dumps(client.posted[0]["blocks"])
+
+
+def test_command_name_override_binds_alternate_slash_command(data_dir: Path) -> None:
+    """Operators whose workspace already owns ``/whereis`` can rebind the
+    listener via ``command_name`` (set from ``OFFICE_SLACK_COMMAND`` in the
+    ``slack-serve`` entry point)."""
+    service = _service_with_active(data_dir, "alice@example.com")
+    service.assign("5-T-01", "alice@example.com")
+    fake_app = FakeSlackApp()
+    build_app(service, app=fake_app, command_name="/ai")
+
+    assert "/ai" in fake_app.handlers
+    assert "/whereis" not in fake_app.handlers
+
+    client = FakeSlackClient()
+    fake_app.handlers["/ai"](
+        ack=lambda: None,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "alice@example.com"},
+        client=client,
+    )
+    assert "5-T-01" in _block_text(_last_blocks(client))
+
+
+def test_command_name_without_leading_slash_raises(data_dir: Path) -> None:
+    service = _service_with_active(data_dir, "alice@example.com")
+    from office_cli.cli._errors import OfficeError
+
+    with pytest.raises(OfficeError) as excinfo:
+        build_app(service, app=FakeSlackApp(), command_name="ai")
+    assert "must start with '/'" in str(excinfo.value)

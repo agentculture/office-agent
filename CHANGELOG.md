@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] - 2026-05-05
+
+### Added
+
+- `OFFICE_SLACK_COMMAND` env var (and matching `command_name` kwarg on
+  `office_cli.slack.build_app`) to rebind the listener away from the
+  default `/whereis` for workspaces where that slash command is already
+  taken by another app. Must include the leading `/`; misuse raises
+  `OfficeError(EXIT_ENV_ERROR)`.
+
 ## [0.9.1] - 2026-05-03
 
 ### Added

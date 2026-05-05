@@ -131,6 +131,16 @@ Requires a Slack app with `commands`, `users:read.email`, `chat:write`
 scopes and Socket Mode enabled. Full app-side checklist:
 [`features/slack.md`](./features/slack.md).
 
+If your workspace already owns `/whereis` (e.g. another bot has the
+slash command), rebind the listener with `OFFICE_SLACK_COMMAND` —
+must include the leading `/` and match what you registered in the
+Slack app manifest:
+
+```bash
+export OFFICE_SLACK_COMMAND=/ai
+office slack-serve
+```
+
 ### Web map server (optional)
 
 ```bash

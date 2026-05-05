@@ -56,12 +56,14 @@ def cmd_slack_serve(args: argparse.Namespace) -> int:
         ) from err
     from office_cli.slack import build_app, run_socket_mode
 
+    command_name = (os.environ.get("OFFICE_SLACK_COMMAND") or "/whereis").strip()
+
     app = App(token=bot_token)
     # Pass ``data_dir`` so build_app auto-resolves the roles map from
     # ``data/offices.yaml``. Without this, every Slack caller would be
     # treated as ``viewer`` regardless of the editor/planning lists.
-    build_app(service, app=app, data_dir=data_dir)
-    emit_diagnostic("Slack /whereis listener starting (Socket Mode)…")
+    build_app(service, app=app, data_dir=data_dir, command_name=command_name)
+    emit_diagnostic(f"Slack {command_name} listener starting (Socket Mode)…")
     run_socket_mode(app, app_token)
     return 0
 
