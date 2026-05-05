@@ -59,6 +59,13 @@ def cmd_slack_serve(args: argparse.Namespace) -> int:
     data_dir = resolve_data_dir(args)
     service = build_service(data_dir, actor="slack")
 
+    # #38: parse the directory env vars before slack-bolt construction
+    # so a misconfigured TTL surfaces as an EXIT_ENV_ERROR rather than
+    # being masked by a downstream BoltError when the App's auth.test
+    # fires on a real network call.
+    directory_enabled = parse_directory_enabled_env()
+    ttl_seconds = _parse_ttl_env(os.environ.get("OFFICE_SLACK_DIRECTORY_TTL"))
+
     # slack_bolt is imported lazily inside `build_app` / `run_socket_mode`
     # so a missing extra surfaces as a clear OfficeError.
     try:
@@ -69,16 +76,69 @@ def cmd_slack_serve(args: argparse.Namespace) -> int:
             message="slack-bolt is not installed",
             remediation=("install the slack extra: pip install office-cli[slack]"),
         ) from err
-    from office_cli.slack import build_app, run_socket_mode
+    from office_cli.slack import SlackUserDirectory, build_app, run_socket_mode
 
     app = App(token=bot_token)
+
+    slack_directory = SlackUserDirectory(
+        app.client, enabled=directory_enabled, cache_ttl_seconds=ttl_seconds
+    )
+    if not directory_enabled:
+        emit_diagnostic(
+            "OFFICE_SLACK_DIRECTORY=disabled — name resolution falls back to "
+            "email / @mention only (no users.list lookup)."
+        )
+
     # Pass ``data_dir`` so build_app auto-resolves the roles map from
     # ``data/offices.yaml``. Without this, every Slack caller would be
     # treated as ``viewer`` regardless of the editor/planning lists.
-    build_app(service, app=app, data_dir=data_dir, command_name=command_name)
+    build_app(
+        service,
+        app=app,
+        data_dir=data_dir,
+        slack_directory=slack_directory,
+        command_name=command_name,
+    )
     emit_diagnostic(f"Slack {command_name} listener starting (Socket Mode)…")
     run_socket_mode(app, app_token)
     return 0
+
+
+_DEFAULT_TTL_SECONDS = 300
+
+
+def parse_directory_enabled_env() -> bool:
+    """Wrapper around the slack-package helper so this module doesn't
+    have to import :mod:`office_cli.slack` for what should be a pure
+    string parse — keeps the early-validation path free of slack-bolt
+    side effects."""
+    from office_cli.slack._directory import parse_directory_enabled
+
+    return parse_directory_enabled(os.environ.get("OFFICE_SLACK_DIRECTORY"))
+
+
+def _parse_ttl_env(raw: str | None) -> int:
+    """Read ``OFFICE_SLACK_DIRECTORY_TTL``. Default 300s; non-positive
+    ints or unparseable values raise ``OfficeError`` so a misconfigured
+    deployment fails loudly at startup rather than silently caching
+    forever (or hammering the API every request)."""
+    if raw is None or not raw.strip():
+        return _DEFAULT_TTL_SECONDS
+    try:
+        value = int(raw.strip())
+    except ValueError as err:
+        raise OfficeError(
+            code=EXIT_ENV_ERROR,
+            message=f"OFFICE_SLACK_DIRECTORY_TTL must be an integer; got {raw!r}",
+            remediation="set OFFICE_SLACK_DIRECTORY_TTL to a positive number of seconds",
+        ) from err
+    if value <= 0:
+        raise OfficeError(
+            code=EXIT_ENV_ERROR,
+            message=f"OFFICE_SLACK_DIRECTORY_TTL must be > 0; got {value}",
+            remediation="pick a TTL ≥ 1 second, or unset to use the 300s default",
+        )
+    return value
 
 
 def register(sub: argparse._SubParsersAction) -> None:

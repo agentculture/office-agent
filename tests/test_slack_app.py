@@ -666,6 +666,210 @@ def test_bare_token_text_fallback_does_not_leak_token(data_dir: Path) -> None:
     assert client.posted[-1]["text"] == "no seat found for that name"
 
 
+def test_slack_directory_resolves_single_match_to_seat(data_dir: Path) -> None:
+    """#38: when local-part match misses, fall through to a Slack
+    workspace name match. One match → use the candidate's email →
+    standard seat-found render via ``_lookup``.
+    """
+    from office_cli.slack._directory import SlackUser, SlackUserDirectory
+
+    service = _service_with_active(data_dir, "alice@example.com")
+    service.assign("5-T-01", "alice@example.com")
+
+    class StaticDirectory(SlackUserDirectory):
+        def __init__(self, users: list[SlackUser]) -> None:
+            self._users_static = users
+            self._enabled = True
+
+        def find_by_name(self, token: str) -> list[SlackUser]:  # type: ignore[override]
+            return [u for u in self._users_static if u.matches(token)]
+
+    directory = StaticDirectory(
+        [
+            SlackUser(
+                user_id="U_ALICE",
+                display_name="Alice",
+                real_name="Alice Smith",
+                name="alice",
+                email="alice@example.com",
+            )
+        ]
+    )
+    app = build_app(service, app=FakeSlackApp(), slack_directory=directory)
+    client = FakeSlackClient()
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "Alice"},  # display name, not the local-part
+        client=client,
+    )
+    text = _block_text(_last_blocks(client))
+    assert "5-T-01" in text
+    assert "alice@example.com" in text
+
+
+def test_slack_directory_disambiguation_for_multiple_matches(data_dir: Path) -> None:
+    """≥2 Slack users sharing the matched name render the new
+    ``disambiguation_users`` block (display name + email per
+    candidate, no seat info)."""
+    from office_cli.slack._directory import SlackUser, SlackUserDirectory
+
+    service = _service_with_active(data_dir, "alice.x@x.com", "alice.y@y.com")
+
+    class StaticDirectory(SlackUserDirectory):
+        def __init__(self, users: list[SlackUser]) -> None:
+            self._users_static = users
+            self._enabled = True
+
+        def find_by_name(self, token: str) -> list[SlackUser]:  # type: ignore[override]
+            return [u for u in self._users_static if u.matches(token)]
+
+    directory = StaticDirectory(
+        [
+            SlackUser(
+                user_id="U_ALICE_X",
+                display_name="Alice",
+                real_name="Alice X",
+                name="alice.x",
+                email="alice.x@x.com",
+            ),
+            SlackUser(
+                user_id="U_ALICE_Y",
+                display_name="Alice",
+                real_name="Alice Y",
+                name="alice.y",
+                email="alice.y@y.com",
+            ),
+        ]
+    )
+    app = build_app(service, app=FakeSlackApp(), slack_directory=directory)
+    client = FakeSlackClient()
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "Alice"},
+        client=client,
+    )
+    text = _block_text(_last_blocks(client))
+    assert "Multiple Slack users matched" in text
+    assert "alice.x@x.com" in text
+    assert "alice.y@y.com" in text
+    assert "Re-run with the full email" in text
+
+
+def test_disabled_slack_directory_keeps_legacy_no_match_path(data_dir: Path) -> None:
+    """``SlackUserDirectory(enabled=False)`` short-circuits the new
+    fallback — the caller sees the same ``no_match_for_token`` block
+    they'd get without #38."""
+    from office_cli.slack._directory import SlackUserDirectory
+
+    service = _service_with_active(data_dir)
+    directory = SlackUserDirectory(client=None, enabled=False)
+    app = build_app(service, app=FakeSlackApp(), slack_directory=directory)
+    client = FakeSlackClient()
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "ghost"},
+        client=client,
+    )
+    text = _block_text(_last_blocks(client))
+    assert "Couldn't find a seat for `ghost`" in text
+
+
+def test_disambiguation_users_caps_render_with_overflow_hint(data_dir: Path) -> None:
+    """PR #41 review (Copilot): Slack messages cap at 50 blocks; a
+    common name in a large workspace can match dozens of users. The
+    builder must render at most ``_DISAMBIG_CANDIDATE_LIMIT``
+    candidates and add a context block reporting the rest, so
+    ``chat.postEphemeral`` doesn't reject the payload silently."""
+    from office_cli.slack._blocks import _DISAMBIG_CANDIDATE_LIMIT, disambiguation_users
+    from office_cli.slack._directory import SlackUser
+
+    candidates = [
+        SlackUser(
+            user_id=f"U_{i}",
+            display_name=f"Alex {i}",
+            real_name=f"Alex {i}",
+            name=f"alex.{i}",
+            email=f"alex.{i}@example.com",
+        )
+        for i in range(25)
+    ]
+    blocks = disambiguation_users("alex", candidates)
+
+    # Header + at-most-cap sections + overflow context + final hint.
+    section_blocks = [b for b in blocks if b.get("type") == "section"]
+    assert len(section_blocks) == 1 + _DISAMBIG_CANDIDATE_LIMIT  # header + capped list
+
+    # Overflow context block reports the remainder.
+    text = _block_text(blocks)
+    overflow = 25 - _DISAMBIG_CANDIDATE_LIMIT
+    assert f"…and {overflow} more" in text
+    assert "Re-run with the full email" in text
+
+    # Total payload stays well under Slack's 50-block ceiling.
+    assert len(blocks) < 50
+
+
+def test_disambiguation_users_no_overflow_hint_when_under_cap(data_dir: Path) -> None:
+    """When candidate count is at or below the cap, no overflow context
+    block is added — only the standard "re-run with full email" hint."""
+    from office_cli.slack._blocks import disambiguation_users
+    from office_cli.slack._directory import SlackUser
+
+    candidates = [
+        SlackUser(
+            user_id="U_A",
+            display_name="Alice",
+            real_name="Alice A",
+            name="alice.a",
+            email="alice.a@example.com",
+        ),
+        SlackUser(
+            user_id="U_B",
+            display_name="Alice",
+            real_name="Alice B",
+            name="alice.b",
+            email="alice.b@example.com",
+        ),
+    ]
+    blocks = disambiguation_users("Alice", candidates)
+    text = _block_text(blocks)
+    assert "more — refine" not in text
+    assert "Re-run with the full email" in text
+
+
+def test_local_part_wins_before_slack_directory(data_dir: Path) -> None:
+    """The Slack directory is consulted only when the local-part path
+    misses; an existing assignment short-circuits the API call."""
+    from office_cli.slack._directory import SlackUserDirectory
+
+    service = _service_with_active(data_dir, "ori.nachum@tipalti.com")
+    service.assign("5-T-03", "ori.nachum@tipalti.com")
+
+    class CountingDirectory(SlackUserDirectory):
+        def __init__(self) -> None:
+            self.calls = 0
+            self._enabled = True
+
+        def find_by_name(self, token: str):  # type: ignore[override]
+            self.calls += 1
+            return []
+
+    directory = CountingDirectory()
+    app = build_app(service, app=FakeSlackApp(), slack_directory=directory)
+    client = FakeSlackClient()
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "ori.nachum"},
+        client=client,
+    )
+    assert directory.calls == 0
+    assert "5-T-03" in _block_text(_last_blocks(client))
+
+
 def test_bare_token_disambiguation_redacts_hidden_seat_id(data_dir: Path) -> None:
     """PR #40 review (Qodo): when the disambiguation list includes a
     redacted (hidden) entry, it must omit the ``seat_id`` to match

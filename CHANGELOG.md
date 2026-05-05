@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.8] - 2026-05-05
+
+### Added
+
+- Slack `/whereis` now resolves bare names against the Slack workspace
+  roster as a follow-up to the email-local-part path landed in
+  [#29](https://github.com/agentculture/office-agent/issues/29).
+  When `find_by_local_part` returns no hits, the handler falls
+  through to a TTL-cached (`OFFICE_SLACK_DIRECTORY_TTL`-tunable;
+  default 300s) `users.list` lookup against `display_name`,
+  `real_name`, and `name`. Exact match wins; multiple matches render
+  the new `disambiguation_users` block (display name + email per
+  candidate) so the caller can re-run with the unambiguous email.
+  Bots, deleted users, and members without a profile email are
+  excluded from the cache. The lookup is fail-open: a transient
+  `users.list` outage keeps serving the previous cache and emits a
+  stderr diagnostic, and a first-attempt failure logs and falls
+  through to the no-match block instead of crashing the listener.
+  ([#38](https://github.com/agentculture/office-agent/issues/38))
+
+- `OFFICE_SLACK_DIRECTORY` env var (read by `office slack-serve`)
+  short-circuits the new path entirely. Set to `disabled` / `off` /
+  `0` / `false` / `no` (case-insensitive) to skip every `users.list`
+  call — recommended for workspaces with tens of thousands of
+  members where the roster fetch is wasteful and the local-part path
+  plus explicit emails are sufficient.
+  ([#38](https://github.com/agentculture/office-agent/issues/38))
+
 ## [0.9.7] - 2026-05-05
 
 ### Added

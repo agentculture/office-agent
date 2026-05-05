@@ -17,6 +17,17 @@ can still import :mod:`office_cli` cleanly.
 from __future__ import annotations
 
 from office_cli.slack._app import build_app
+from office_cli.slack._directory import (
+    SlackUser,
+    SlackUserDirectory,
+    parse_directory_enabled,
+)
 from office_cli.slack._serve import run_socket_mode
 
-__all__ = ["build_app", "run_socket_mode"]
+__all__ = [
+    "build_app",
+    "run_socket_mode",
+    "SlackUser",
+    "SlackUserDirectory",
+    "parse_directory_enabled",
+]
