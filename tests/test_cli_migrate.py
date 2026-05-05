@@ -59,8 +59,8 @@ def test_csv_to_dynamo_round_trip(
     )
     assert rc == 0
     summary = json.loads(capsys.readouterr().out)
-    # Issue #33: migrate pads with vacant rows for every SVG seat, so the
-    # written count is the full SVG seat universe (2 touched + 6 padded).
+    # Issue #33: migrate pads with vacant rows for every assignable id, so
+    # the written count is the full universe (2 touched + 7 padded).
     assert summary["assignments_written"] == _FIXTURE_SEAT_COUNT
 
     # Now read via dynamo and confirm parity. Use monkeypatch so a
@@ -129,7 +129,7 @@ def test_same_source_and_target_rejected(
 # --- Issue #33: migrate pads target with vacant rows for every SVG seat ----
 
 
-_FIXTURE_SEAT_COUNT = 8  # tlv-floor-5.svg: 6 in T cluster + 2 in Z cluster
+_FIXTURE_SEAT_COUNT = 9  # tlv-floor-5: 6 T-cluster + 2 Z-cluster + 1 room (5.18)
 
 
 def test_migrate_pads_vacant_rows_for_every_svg_seat(
@@ -184,7 +184,9 @@ def test_migrate_idempotent_with_padding(
 
 
 def test_migrate_dry_run_with_padding_writes_nothing(
-    dynamo_data_dir: Path, capsys: pytest.CaptureFixture[str]
+    dynamo_data_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """``--dry-run --json`` reports the full padded count without writing
     to the target."""
@@ -206,7 +208,10 @@ def test_migrate_dry_run_with_padding_writes_nothing(
     assert summary["dry_run"] is True
     assert summary["assignments_new"] == _FIXTURE_SEAT_COUNT
 
-    # Target must remain empty.
+    # The dry-run guarantee is about the *Dynamo target*, not the CSV
+    # source. Switch the read backend to dynamo so the assertion actually
+    # exercises the target store.
+    monkeypatch.setenv("OFFICE_STORE", "dynamo")
     rc = main(["seats", "list", "--json", "--occupied", *_data(dynamo_data_dir)])
     assert rc == 0
     assert json.loads(capsys.readouterr().out)["seats"] == []
@@ -349,3 +354,126 @@ def test_migrate_padded_rows_carry_correct_floor_field(
     assert seats_by_id["5-T-01"] == "tlv-floor-5"
     assert seats_by_id["9-A-01"] == "tlv-floor-9"
     assert seats_by_id["9-A-02"] == "tlv-floor-9"
+
+
+def test_migrate_pads_rooms_not_just_seats(
+    dynamo_data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The fixture has a YAML-declared room ``5.18`` that's also class=room
+    in the SVG. After migrate against an empty source, the target must
+    include a vacant row for ``5.18``; it must not be reported as an
+    orphan. (Per ``_build_seat_index``, rooms are valid assignment
+    targets — pad them.)"""
+    rc = main(
+        [
+            "seats",
+            "migrate",
+            "--from",
+            "csv",
+            "--to",
+            "dynamo",
+            "--json",
+            *_data(dynamo_data_dir),
+        ]
+    )
+    assert rc == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["assignments_orphans"] == 0
+    # 6 T-seats + 2 Z-seats + 1 room (5.18) = 9 assignable ids.
+    assert summary["assignments_written"] == _FIXTURE_SEAT_COUNT
+
+
+def test_migrate_room_assignment_is_not_an_orphan(
+    dynamo_data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A row in the source store for the room ``5.18`` is a legitimate
+    assignment, not an orphan — even though the room has a different
+    naming pattern from open-space seats."""
+    main(["seats", "assign", "5.18", "team-room@example.com", *_data(dynamo_data_dir)])
+    capsys.readouterr()
+
+    rc = main(
+        [
+            "seats",
+            "migrate",
+            "--from",
+            "csv",
+            "--to",
+            "dynamo",
+            "--json",
+            *_data(dynamo_data_dir),
+        ]
+    )
+    assert rc == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["assignments_orphans"] == 0
+
+
+def test_migrate_reports_target_orphans_without_deleting_them(
+    dynamo_data_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rows already in the target whose ids are neither in source nor in
+    any SVG/YAML are surfaced as ``assignments_target_orphans`` in stderr
+    + JSON, but the migration does not delete them — migrate is purely
+    additive, never destructive. Without this, dry-run misleadingly
+    reports 'all unchanged' while the target diverges from the universe."""
+    # Plant a stale row directly into the dynamo fake.
+    main(["seats", "migrate", "--from", "csv", "--to", "dynamo", *_data(dynamo_data_dir)])
+    capsys.readouterr()
+    # Inject a row for an id that's neither in source nor SVG/YAML.
+    csv_path = dynamo_data_dir / "seats" / "assignments.csv"
+    csv_path.write_text(
+        "seat_id,floor,employee_email,last_updated,hidden,notes,"
+        "effective_from,effective_until\n"
+        "stale-X-99,phantom-floor,old@example.com,2026-01-01T00:00:00Z,FALSE,,,\n",
+        encoding="utf-8",
+    )
+    main(
+        [
+            "seats",
+            "migrate",
+            "--from",
+            "csv",
+            "--to",
+            "dynamo",
+            "--audit-append",
+            *_data(dynamo_data_dir),
+        ]
+    )
+    capsys.readouterr()
+    # Now reset the source CSV (no rows). target still has stale-X-99.
+    csv_path.unlink()
+
+    rc = main(
+        [
+            "seats",
+            "migrate",
+            "--from",
+            "csv",
+            "--to",
+            "dynamo",
+            "--dry-run",
+            "--json",
+            *_data(dynamo_data_dir),
+        ]
+    )
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "target orphans: 1" in captured.err
+    assert "stale-X-99" in captured.err
+
+    summary = json.loads(captured.out)
+    assert summary["assignments_target_orphans"] == 1
+    # Source has nothing; padding is the full universe; target already
+    # has all of those + stale-X-99 as the orphan. So all unchanged.
+    assert summary["assignments_unchanged"] == _FIXTURE_SEAT_COUNT
+    assert summary["assignments_new"] == 0
+
+    # Stale row must still be in the target (not deleted by dry-run).
+    monkeypatch.setenv("OFFICE_STORE", "dynamo")
+    rc = main(["seats", "history", "stale-X-99", "--json", *_data(dynamo_data_dir)])
+    # The history call may return empty; the important check is that the
+    # row exists in the assignments store.
+    capsys.readouterr()

@@ -9,15 +9,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- `office seats migrate` now writes one row per SVG seat — vacant rows
-  for never-assigned seats — so the target backend mirrors the full
-  seat universe declared in `data/offices.yaml` + `floors/*.svg`. The
-  previous behavior wrote only "touched" rows, leaving the Google Sheet
-  sparse (3 of 9 seats in the smoke-test fixture) and undercutting the
-  Sheets-as-CMS architectural promise in `CLAUDE.md`. Rows in the source
-  store that don't correspond to any SVG seat (orphans) survive the
-  migration but are now surfaced separately on stderr and in the JSON
-  summary's `assignments_orphans` field.
+- `office seats migrate` now writes one row per assignable seat-or-room
+  declared by the office topology — vacant rows for never-assigned
+  ids — so the target backend mirrors the full universe (union of SVG
+  `seat_ids`, SVG `room_ids`, and YAML-declared rooms; matches
+  `SeatService._build_seat_index`). The previous behavior wrote only
+  "touched" rows, leaving the Google Sheet sparse and undercutting the
+  Sheets-as-CMS architectural promise in `CLAUDE.md`. Two flavors of
+  orphan are surfaced separately: **source orphans** (rows in source
+  not in any SVG/YAML — kept, never deleted) and **target orphans**
+  (rows in target neither in source nor in the universe — kept, never
+  deleted, but now flagged so dry-run no longer reports a falsely
+  "all unchanged" status while the target diverges from the universe).
+  Both surface on stderr and in the JSON summary as
+  `assignments_orphans` / `assignments_target_orphans`.
   ([#33](https://github.com/agentculture/office-agent/issues/33))
 
 ## [0.9.2] - 2026-05-05
