@@ -11,6 +11,7 @@ from itertools import count
 import pytest
 
 from office_cli.seats import Assignment, AuditEntry
+from office_cli.seats._audit import FIELDNAMES
 from office_cli.seats.sheets import SheetsAuditLog, SheetsStore
 
 
@@ -146,6 +147,31 @@ def test_audit_append_seeds_header_then_appends() -> None:
     )
     rows = audit.all()
     assert [r.action for r in rows] == ["assign", "unassign"]
+
+
+def test_audit_append_seeds_header_when_tab_is_phantom_empty() -> None:
+    """Regression for #32: gspread auto-creates a tab via
+    ``add_worksheet(rows=1, cols=10)`` on first touch; the read returns a
+    single row of empty strings, not ``[]``. The previous guard treated
+    that as "already populated" and skipped writing the header, so
+    ``audit.all()`` couldn't parse subsequent rows."""
+    client = FakeSheetsClient()
+    client.tabs["audit-log"] = [["", "", "", "", "", "", "", "", "", ""]]
+    audit = SheetsAuditLog(client)
+    audit.append(
+        AuditEntry(
+            timestamp="2026-05-05T00:00:01Z",
+            actor="t",
+            action="assign",
+            seat_id="5-T-01",
+            employee_email="alice@x",
+        )
+    )
+    assert client.tabs["audit-log"][0] == list(FIELDNAMES)
+    rows = audit.all()
+    assert len(rows) == 1
+    assert rows[0].seat_id == "5-T-01"
+    assert audit.for_seat("5-T-01")[0].employee_email == "alice@x"
 
 
 def test_audit_for_seat_filters() -> None:

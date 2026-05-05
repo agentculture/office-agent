@@ -24,7 +24,12 @@ class SheetsAuditLog:
         if not rows:
             return
         existing = self._client.read_rows(self._worksheet)
-        if not existing:
+        # gspread auto-creates the tab via ``add_worksheet(rows=1, cols=10)``
+        # the first time we touch it, and ``get_all_values()`` then returns a
+        # phantom row of empty strings — truthy, but content-free. Treat that
+        # the same as an empty sheet so the header gets seeded.
+        has_real_content = any(any(cell.strip() for cell in row) for row in existing)
+        if not has_real_content:
             self._client.replace_rows(self._worksheet, [list(FIELDNAMES), *rows])
         else:
             self._client.append_rows(self._worksheet, rows)
