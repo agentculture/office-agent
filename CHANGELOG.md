@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.7] - 2026-05-05
+
+### Added
+
+- Slack `/whereis` (or any `OFFICE_SLACK_COMMAND` override) now accepts
+  a bare name or username (`/whereis ori.nachum`) and resolves it
+  against the assignment store's email local-parts (case-insensitive).
+  The failed-autocomplete shape (`@ori.nachum` — what Slack sometimes
+  substitutes when the proper `<@Uxxx>` markup doesn't fire) is treated
+  identically. When a bare token matches a single assignment the seat
+  renders as before; when it matches two or more (same local-part
+  across multiple email domains) the handler renders an ephemeral
+  disambiguation list with the full emails so the caller can re-run
+  with the unambiguous form. Hidden seats keep the redaction
+  treatment in the disambiguation list. The unparseable-text block now
+  mentions name + `@mention` + email as accepted input forms.
+  ([#29](https://github.com/agentculture/office-agent/issues/29))
+
+  This is the MVP slice of the resolution chain in #29. Two follow-ups
+  cover the rest of the chain:
+  [#38](https://github.com/agentculture/office-agent/issues/38) adds
+  Slack `users.list` exact-name lookup with a TTL cache and an
+  opt-out env var;
+  [#39](https://github.com/agentculture/office-agent/issues/39) adds
+  fuzzy / partial matching with an interactive disambiguation UI.
+
 ## [0.9.6] - 2026-05-05
 
 ### Changed

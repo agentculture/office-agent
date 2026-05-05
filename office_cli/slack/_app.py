@@ -115,6 +115,9 @@ def _resolve_and_lookup(
         label = email
         return _lookup(service, email, label, as_of=as_of, role=role)
 
+    if target.bare_token:
+        return _lookup_by_local_part(service, target.bare_token, as_of=as_of, role=role)
+
     user_id = target.user_id or command.get("user_id") or body.get("user_id", "")
     if not user_id:
         return _blocks.lookup_failed("no Slack user id supplied"), "no user id"
@@ -168,6 +171,38 @@ def _email_from_user_id(client: Any, user_id: str) -> tuple[str, str]:
     if not email:
         return "", ("no email on that Slack profile (the bot needs the `users:read.email` scope)")
     return email, ""
+
+
+def _lookup_by_local_part(
+    service: SeatService,
+    token: str,
+    *,
+    as_of: str | None = None,
+    role: str | None = None,
+) -> tuple[list[dict[str, Any]], str]:
+    """#29 MVP: ``/whereis ori.nachum`` resolves via the assignment
+    store's email local-parts. 0 → friendly error; 1 → standard
+    seat-found render; 2+ → disambiguation list."""
+    matches = service.find_by_local_part(token, as_of=as_of, role=role)
+    # ``text`` fallback strings stay free of ``token``: Slack parses the
+    # fallback for ``<!here>`` / ``<@U…>`` / ``<#C…>`` sequences when
+    # blocks aren't rendered, so an attacker-controlled token must not
+    # land there. The block builders escape the token for mrkdwn
+    # display; the fallback uses constants.
+    if not matches:
+        return _blocks.no_match_for_token(token), "no seat found for that name"
+    if len(matches) == 1:
+        a = matches[0]
+        # Use the resolved (store-derived) email as the label so even
+        # the single-match path doesn't echo the user's raw token.
+        label = a.employee_email or "(redacted)"
+        if a.redacted:
+            return _blocks.hidden_private(a, target_label=label), "occupied (private)"
+        return (
+            _blocks.occupied(a, target_label=label),
+            f"{label} → {a.seat_id}",
+        )
+    return _blocks.disambiguation(token, matches), f"{len(matches)} matches"
 
 
 def _lookup(

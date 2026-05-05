@@ -145,3 +145,45 @@ def test_room_assignable(data_dir: Path) -> None:
     s = _service(data_dir)
     a = s.assign("5.18", "exec@example.com")
     assert a.seat_id == "5.18"
+
+
+def test_find_by_local_part_returns_single_match(data_dir: Path) -> None:
+    """#29 MVP: ``ori.nachum`` resolves to ``ori.nachum@<any-domain>``."""
+    s = _service(data_dir)
+    s.assign("5-T-01", "ori.nachum@tipalti.com")
+    matches = s.find_by_local_part("ori.nachum")
+    assert len(matches) == 1
+    assert matches[0].employee_email == "ori.nachum@tipalti.com"
+    assert matches[0].seat_id == "5-T-01"
+
+
+def test_find_by_local_part_is_case_insensitive(data_dir: Path) -> None:
+    s = _service(data_dir)
+    s.assign("5-T-01", "alice@example.com")
+    assert s.find_by_local_part("ALICE")[0].employee_email == "alice@example.com"
+    assert s.find_by_local_part("Alice")[0].employee_email == "alice@example.com"
+
+
+def test_find_by_local_part_returns_multiple_for_domain_collision(data_dir: Path) -> None:
+    """Same local-part across domains → all matches surface; the
+    handler decides on disambiguation."""
+    s = _service(data_dir)
+    s.assign("5-T-01", "alice@x.com")
+    s.assign("5-T-02", "alice@y.com")
+    matches = s.find_by_local_part("alice")
+    assert {a.employee_email for a in matches} == {"alice@x.com", "alice@y.com"}
+
+
+def test_find_by_local_part_returns_empty_for_unknown(data_dir: Path) -> None:
+    s = _service(data_dir)
+    s.assign("5-T-01", "alice@example.com")
+    assert s.find_by_local_part("ghost") == []
+    assert s.find_by_local_part("") == []
+
+
+def test_find_by_local_part_skips_partial_prefix(data_dir: Path) -> None:
+    """Exact local-part only — ``ali`` does NOT match ``alice@…`` in
+    the MVP. Prefix/fuzzy is follow-up B (#39)."""
+    s = _service(data_dir)
+    s.assign("5-T-01", "alice@example.com")
+    assert s.find_by_local_part("ali") == []

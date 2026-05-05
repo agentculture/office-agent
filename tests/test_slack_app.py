@@ -235,6 +235,10 @@ def test_inactive_directory_email_renders_no_seat(data_dir: Path) -> None:
 
 
 def test_unparseable_text(data_dir: Path) -> None:
+    """Post-#29: a bare token like ``garbage_no_email_no_mention`` is no
+    longer a parse failure — it's captured as ``bare_token`` and looked
+    up against the assignment store. With no matching local-part, the
+    handler renders the new ``no_match_for_token`` block instead."""
     service = _service_with_active(data_dir)
     app = build_app(service, app=FakeSlackApp())
     client = FakeSlackClient()
@@ -245,7 +249,7 @@ def test_unparseable_text(data_dir: Path) -> None:
         client=client,
     )
     text = _block_text(_last_blocks(client))
-    assert "Couldn't parse" in text
+    assert "Couldn't find a seat for" in text
     assert "garbage_no_email_no_mention" in text
 
 
@@ -542,3 +546,153 @@ def test_command_name_empty_after_strip_raises(data_dir: Path) -> None:
 
     with pytest.raises(OfficeError):
         build_app(service, app=FakeSlackApp(), command_name="   ")
+
+
+def test_bare_token_resolves_to_assignment(data_dir: Path) -> None:
+    """#29 MVP: ``/whereis ori.nachum`` resolves via local-part match."""
+    service = _service_with_active(data_dir, "ori.nachum@tipalti.com")
+    service.assign("5-T-03", "ori.nachum@tipalti.com")
+    app = build_app(service, app=FakeSlackApp())
+    client = FakeSlackClient()
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "ori.nachum"},
+        client=client,
+    )
+    text = _block_text(_last_blocks(client))
+    assert "5-T-03" in text
+    assert "ori.nachum@tipalti.com" in text
+
+
+def test_at_username_resolves_to_assignment(data_dir: Path) -> None:
+    """Failed-autocomplete (`@username` instead of `<@Uxxx>` markup)
+    should be treated as a bare token after the leading ``@`` is
+    stripped."""
+    service = _service_with_active(data_dir, "ori.nachum@tipalti.com")
+    service.assign("5-T-03", "ori.nachum@tipalti.com")
+    app = build_app(service, app=FakeSlackApp())
+    client = FakeSlackClient()
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "@ori.nachum"},
+        client=client,
+    )
+    text = _block_text(_last_blocks(client))
+    assert "5-T-03" in text
+
+
+def test_bare_token_no_match_renders_helpful_error(data_dir: Path) -> None:
+    """Unknown bare token renders the new ``no_match_for_token`` block
+    with guidance on what is accepted."""
+    service = _service_with_active(data_dir)
+    app = build_app(service, app=FakeSlackApp())
+    client = FakeSlackClient()
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "ghost"},
+        client=client,
+    )
+    text = _block_text(_last_blocks(client))
+    assert "Couldn't find a seat for `ghost`" in text
+    assert "email" in text.lower() or "@mention" in text
+
+
+def test_bare_token_disambiguation_renders_candidates(data_dir: Path) -> None:
+    """Two assignments sharing a local-part across domains → the multi-
+    section disambiguation block lists both and ends with the
+    "re-run with the full email" hint."""
+    service = _service_with_active(data_dir, "alice@x.com", "alice@y.com")
+    service.assign("5-T-01", "alice@x.com")
+    service.assign("5-T-02", "alice@y.com")
+    app = build_app(service, app=FakeSlackApp())
+    client = FakeSlackClient()
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "alice"},
+        client=client,
+    )
+    text = _block_text(_last_blocks(client))
+    assert "Multiple seats matched" in text
+    assert "alice@x.com" in text
+    assert "alice@y.com" in text
+    assert "5-T-01" in text
+    assert "5-T-02" in text
+    assert "Re-run with the full email" in text
+
+
+def test_bare_token_with_mrkdwn_metachars_is_escaped(data_dir: Path) -> None:
+    """PR #40 review (Copilot): a bare token containing ``<``/``>`` /
+    ``&`` / backtick must not break formatting or inject Slack control
+    sequences (``<!here>``, ``<@U…>``) when echoed back. The block
+    builders escape these before mrkdwn display, and the ``text``
+    fallback stays free of the token entirely."""
+    service = _service_with_active(data_dir)
+    app = build_app(service, app=FakeSlackApp())
+    client = FakeSlackClient()
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "<!here>"},
+        client=client,
+    )
+    posted = client.posted[-1]
+    blocks_text = _block_text(posted["blocks"])
+    # The literal ``<!here>`` must be escaped, not pinged.
+    assert "<!here>" not in blocks_text
+    assert "&lt;!here&gt;" in blocks_text
+    # And the ``text`` fallback (rendered when blocks aren't supported)
+    # must not echo the token at all.
+    assert "<!here>" not in posted["text"]
+
+
+def test_bare_token_text_fallback_does_not_leak_token(data_dir: Path) -> None:
+    """Companion to the mrkdwn-escape test: even a benign token shouldn't
+    appear in the ``text`` fallback, because Slack parses that string
+    too. We assert the no-match path's fallback is the documented
+    constant, not an interpolation of the user input."""
+    service = _service_with_active(data_dir)
+    app = build_app(service, app=FakeSlackApp())
+    client = FakeSlackClient()
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "ghost"},
+        client=client,
+    )
+    assert client.posted[-1]["text"] == "no seat found for that name"
+
+
+def test_bare_token_disambiguation_redacts_hidden_seat_id(data_dir: Path) -> None:
+    """PR #40 review (Qodo): when the disambiguation list includes a
+    redacted (hidden) entry, it must omit the ``seat_id`` to match
+    ``hidden_private``'s privacy contract — viewer-role callers can
+    see *that* there's a private match without learning where it sits."""
+    from office_cli._roles import RolesConfig
+
+    service = _service_with_active(data_dir, "alice@x.com", "alice@y.com")
+    service.assign("5-T-01", "alice@x.com")  # public
+    service.assign("5-T-02", "alice@y.com", hidden=True)  # private
+    # Empty roles config → caller is viewer → redaction fires for hidden seats.
+    roles = RolesConfig()
+    app = build_app(service, app=FakeSlackApp(), roles=roles)
+    # The caller's user_id maps to no role entry → defaults to viewer.
+    client = FakeSlackClient(users={"U999": {"profile": {"email": "viewer@x.com"}}})
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "alice"},
+        client=client,
+    )
+    text = _block_text(_last_blocks(client))
+    # Public match is fully visible.
+    assert "5-T-01" in text
+    assert "alice@x.com" in text
+    # Hidden match: floor visible, seat_id NOT, email NOT.
+    assert "tlv-floor-5" in text
+    assert "5-T-02" not in text
+    assert "alice@y.com" not in text
+    assert "occupied (private)" in text

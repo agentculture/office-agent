@@ -76,6 +76,41 @@ class SeatService:
             out.append(a)
         return out
 
+    def find_by_local_part(
+        self,
+        token: str,
+        *,
+        as_of: str | None = None,
+        role: str | None = None,
+    ) -> list[Assignment]:
+        """Return every active assignment whose email's local-part
+        matches ``token`` case-insensitively (#29 MVP).
+
+        ``ori.nachum`` matches ``ori.nachum@anything.com``. The same
+        directory ``is_active`` filter and as-of window check that
+        :meth:`whereis` applies fire here, so an assignment for an
+        offboarded employee never resurfaces through the bare-token
+        path. Role redaction is applied per match. Multiple matches
+        (different domains sharing a local-part) all surface — the
+        caller decides on disambiguation policy.
+        """
+        if not token:
+            return []
+        needle = token.lower()
+        out: list[Assignment] = []
+        for a in self.store.list():
+            email = a.employee_email or ""
+            if "@" not in email:
+                continue
+            if email.split("@", 1)[0].lower() != needle:
+                continue
+            if not self.directory.is_active(email):
+                continue
+            if as_of is not None and not is_effective(a, as_of):
+                continue
+            out.append(_apply_role_redaction(a, role))
+        return out
+
     def whereis(
         self,
         email: str,

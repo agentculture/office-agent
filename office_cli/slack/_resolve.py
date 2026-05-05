@@ -44,12 +44,15 @@ _TRAILING_DATE_RE = re.compile(r"(?:^|\s)(?P<date>\d{4}-\d{2}-\d{2})\s*$")
 class ParsedTarget:
     """Result of parsing the slash-command text.
 
-    Exactly one of ``user_id`` / ``email`` is set when the parse succeeds;
-    both are empty when the text was not parseable. ``self_lookup`` flags
-    the no-arg case so the caller can read the invoker's own ``user_id``
-    from the command body. ``as_of`` is the optional trailing
-    ``YYYY-MM-DD`` token (Stage 6); empty when the caller did not pass a
-    date.
+    Exactly one of ``user_id`` / ``email`` / ``bare_token`` is set when
+    the parse succeeds; all are empty when the text was not parseable.
+    ``self_lookup`` flags the no-arg case so the caller can read the
+    invoker's own ``user_id`` from the command body. ``as_of`` is the
+    optional trailing ``YYYY-MM-DD`` token (Stage 6); empty when the
+    caller did not pass a date. ``bare_token`` (#29 MVP) carries the
+    name-or-username form (``alice``, ``ori.nachum``, ``@ori.nachum``)
+    for the caller to resolve via the assignment store's email
+    local-parts.
     """
 
     user_id: str = ""
@@ -57,10 +60,11 @@ class ParsedTarget:
     self_lookup: bool = False
     raw: str = ""
     as_of: str = ""
+    bare_token: str = ""
 
     @property
     def ok(self) -> bool:
-        return bool(self.user_id or self.email or self.self_lookup)
+        return bool(self.user_id or self.email or self.self_lookup or self.bare_token)
 
 
 def parse_target(text: str) -> ParsedTarget:
@@ -98,5 +102,17 @@ def parse_target(text: str) -> ParsedTarget:
     email = _EMAIL_RE.search(stripped)
     if email:
         return ParsedTarget(email=email.group(0), raw=raw.strip(), as_of=as_of)
+
+    # #29 MVP: accept a bare name / username token as a hint for the
+    # caller to resolve against the assignment store's email local-
+    # parts. Strip a single leading ``@`` (failed-autocomplete case),
+    # then take the first whitespace-separated token. Tokens that still
+    # contain an ``@`` after stripping aren't valid bare names — let
+    # the parse fail rather than feeding a broken email downstream.
+    first = stripped.split()[0]
+    if first.startswith("@"):
+        first = first[1:]
+    if first and "@" not in first:
+        return ParsedTarget(bare_token=first, raw=raw.strip(), as_of=as_of)
 
     return ParsedTarget(raw=raw.strip(), as_of=as_of)

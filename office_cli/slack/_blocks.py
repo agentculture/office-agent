@@ -15,6 +15,25 @@ from typing import Any
 from office_cli.seats import Assignment
 
 
+def _escape_mrkdwn(s: str) -> str:
+    """Escape Slack mrkdwn control characters in user-supplied text.
+
+    Slack mrkdwn parses ``<…>`` as a special link / mention sequence
+    (``<!here>``, ``<@U…>``, ``<#C…>``, ``<https://…>``), so an
+    unescaped ``<`` from a user-supplied token can ping the channel or
+    rewrite the message. ``&`` is the HTML-entity prefix and must be
+    escaped first or we'd double-escape ``<`` / ``>`` below. Backticks
+    cannot be escaped inside a code span, so we replace them with a
+    single quote — visual approximation, no parser confusion.
+
+    Apply to anything that flows from the slash-command argument into
+    a rendered block. Slack's ``text`` fallback is *also* parsed for
+    these sequences when blocks aren't rendered; the handler keeps
+    user tokens out of that field entirely as a separate defense.
+    """
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("`", "'")
+
+
 def _deep_link_button(seat_id: str, floor: str) -> dict[str, Any] | None:
     base = (os.environ.get("OFFICE_WEB_BASE_URL") or "").rstrip("/")
     if not base:
@@ -102,12 +121,73 @@ def parse_failed(raw: str) -> list[dict[str, Any]]:
             "text": {
                 "type": "mrkdwn",
                 "text": (
-                    f"Couldn't parse a person from `{raw}`. Pass an "
-                    "`@mention` or an `email@address`."
+                    f"Couldn't parse a person from `{raw}`. Pass a name "
+                    "(`alice` or `ori.nachum`), an `@mention`, or an "
+                    "`email@address`."
                 ),
             },
         }
     ]
+
+
+def no_match_for_token(token: str) -> list[dict[str, Any]]:
+    """No assignment matched the bare-token local-part (#29 MVP)."""
+    safe = _escape_mrkdwn(token)
+    return [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"Couldn't find a seat for `{safe}`. Try the full "
+                    "`email@address` or an `@mention`."
+                ),
+            },
+        }
+    ]
+
+
+def disambiguation(token: str, matches: list[Assignment]) -> list[dict[str, Any]]:
+    """Multi-section list when ``find_by_local_part`` returned ≥2
+    candidates (#29 MVP). Each ``Assignment`` gets a section block
+    showing its email + seat. Redacted entries follow the same
+    contract as :func:`hidden_private` — only the floor is shown, not
+    the seat id, so a viewer-role caller can see *that* there's a
+    private match without learning where it sits."""
+    safe_token = _escape_mrkdwn(token)
+    blocks: list[dict[str, Any]] = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"Multiple seats matched `{safe_token}`:",
+            },
+        }
+    ]
+    for a in matches:
+        if a.redacted:
+            # Match hidden_private's privacy contract: floor only, no seat_id.
+            line = f"• occupied (private) on `{a.floor}`"
+        else:
+            line = f"• {a.employee_email} → `{a.seat_id}` on `{a.floor}`"
+        blocks.append(
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": line},
+            }
+        )
+    blocks.append(
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": "_Re-run with the full email to pick one._",
+                }
+            ],
+        }
+    )
+    return blocks
 
 
 def lookup_failed(reason: str) -> list[dict[str, Any]]:
