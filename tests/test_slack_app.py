@@ -235,6 +235,10 @@ def test_inactive_directory_email_renders_no_seat(data_dir: Path) -> None:
 
 
 def test_unparseable_text(data_dir: Path) -> None:
+    """Post-#29: a bare token like ``garbage_no_email_no_mention`` is no
+    longer a parse failure — it's captured as ``bare_token`` and looked
+    up against the assignment store. With no matching local-part, the
+    handler renders the new ``no_match_for_token`` block instead."""
     service = _service_with_active(data_dir)
     app = build_app(service, app=FakeSlackApp())
     client = FakeSlackClient()
@@ -245,7 +249,7 @@ def test_unparseable_text(data_dir: Path) -> None:
         client=client,
     )
     text = _block_text(_last_blocks(client))
-    assert "Couldn't parse" in text
+    assert "Couldn't find a seat for" in text
     assert "garbage_no_email_no_mention" in text
 
 
@@ -542,3 +546,79 @@ def test_command_name_empty_after_strip_raises(data_dir: Path) -> None:
 
     with pytest.raises(OfficeError):
         build_app(service, app=FakeSlackApp(), command_name="   ")
+
+
+def test_bare_token_resolves_to_assignment(data_dir: Path) -> None:
+    """#29 MVP: ``/whereis ori.nachum`` resolves via local-part match."""
+    service = _service_with_active(data_dir, "ori.nachum@tipalti.com")
+    service.assign("5-T-03", "ori.nachum@tipalti.com")
+    app = build_app(service, app=FakeSlackApp())
+    client = FakeSlackClient()
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "ori.nachum"},
+        client=client,
+    )
+    text = _block_text(_last_blocks(client))
+    assert "5-T-03" in text
+    assert "ori.nachum@tipalti.com" in text
+
+
+def test_at_username_resolves_to_assignment(data_dir: Path) -> None:
+    """Failed-autocomplete (`@username` instead of `<@Uxxx>` markup)
+    should be treated as a bare token after the leading ``@`` is
+    stripped."""
+    service = _service_with_active(data_dir, "ori.nachum@tipalti.com")
+    service.assign("5-T-03", "ori.nachum@tipalti.com")
+    app = build_app(service, app=FakeSlackApp())
+    client = FakeSlackClient()
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "@ori.nachum"},
+        client=client,
+    )
+    text = _block_text(_last_blocks(client))
+    assert "5-T-03" in text
+
+
+def test_bare_token_no_match_renders_helpful_error(data_dir: Path) -> None:
+    """Unknown bare token renders the new ``no_match_for_token`` block
+    with guidance on what is accepted."""
+    service = _service_with_active(data_dir)
+    app = build_app(service, app=FakeSlackApp())
+    client = FakeSlackClient()
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "ghost"},
+        client=client,
+    )
+    text = _block_text(_last_blocks(client))
+    assert "Couldn't find a seat for `ghost`" in text
+    assert "email" in text.lower() or "@mention" in text
+
+
+def test_bare_token_disambiguation_renders_candidates(data_dir: Path) -> None:
+    """Two assignments sharing a local-part across domains → the multi-
+    section disambiguation block lists both and ends with the
+    "re-run with the full email" hint."""
+    service = _service_with_active(data_dir, "alice@x.com", "alice@y.com")
+    service.assign("5-T-01", "alice@x.com")
+    service.assign("5-T-02", "alice@y.com")
+    app = build_app(service, app=FakeSlackApp())
+    client = FakeSlackClient()
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "alice"},
+        client=client,
+    )
+    text = _block_text(_last_blocks(client))
+    assert "Multiple seats matched" in text
+    assert "alice@x.com" in text
+    assert "alice@y.com" in text
+    assert "5-T-01" in text
+    assert "5-T-02" in text
+    assert "Re-run with the full email" in text

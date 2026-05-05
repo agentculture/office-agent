@@ -102,12 +102,69 @@ def parse_failed(raw: str) -> list[dict[str, Any]]:
             "text": {
                 "type": "mrkdwn",
                 "text": (
-                    f"Couldn't parse a person from `{raw}`. Pass an "
-                    "`@mention` or an `email@address`."
+                    f"Couldn't parse a person from `{raw}`. Pass a name "
+                    "(`alice` or `ori.nachum`), an `@mention`, or an "
+                    "`email@address`."
                 ),
             },
         }
     ]
+
+
+def no_match_for_token(token: str) -> list[dict[str, Any]]:
+    """No assignment matched the bare-token local-part (#29 MVP)."""
+    return [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"Couldn't find a seat for `{token}`. Try the full "
+                    "`email@address` or an `@mention`."
+                ),
+            },
+        }
+    ]
+
+
+def disambiguation(token: str, matches: list[Assignment]) -> list[dict[str, Any]]:
+    """Multi-section list when ``find_by_local_part`` returned ≥2
+    candidates (#29 MVP). Each ``Assignment`` gets a section block
+    showing its email + seat. Hidden seats render with redaction
+    already applied by the service layer (see
+    ``SeatService.find_by_local_part`` + ``_apply_role_redaction``)."""
+    blocks: list[dict[str, Any]] = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"Multiple seats matched `{token}`:",
+            },
+        }
+    ]
+    for a in matches:
+        if a.redacted:
+            line = f"• `{a.seat_id}` on `{a.floor}` — occupied (private)"
+        else:
+            line = f"• {a.employee_email} → `{a.seat_id}` on `{a.floor}`"
+        blocks.append(
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": line},
+            }
+        )
+    blocks.append(
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": "_Re-run with the full email to pick one._",
+                }
+            ],
+        }
+    )
+    return blocks
 
 
 def lookup_failed(reason: str) -> list[dict[str, Any]]:

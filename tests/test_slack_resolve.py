@@ -53,10 +53,48 @@ def test_first_email_wins_among_many() -> None:
     assert target.email == "alice@x.com"
 
 
-def test_unparseable_text_marks_failure() -> None:
+def test_bare_token_is_captured() -> None:
+    """#29 MVP: a bare name/username token now parses to ``bare_token``
+    so the handler can resolve via the assignment store's email
+    local-parts. ``"nope"`` is no longer a parse failure."""
     target = parse_target("nope")
-    assert target.ok is False
+    assert target.bare_token == "nope"
+    assert target.email == ""
+    assert target.user_id == ""
+    assert target.ok is True
     assert target.raw == "nope"
+
+
+def test_at_prefix_is_stripped_from_bare_token() -> None:
+    """Failed-autocomplete case: Slack sometimes substitutes only
+    ``@username`` instead of the proper ``<@Uxxx>`` markup."""
+    target = parse_target("@ori.nachum")
+    assert target.bare_token == "ori.nachum"
+    assert target.email == ""
+    assert target.user_id == ""
+
+
+def test_email_still_wins_over_bare_token() -> None:
+    """Plain email parses as ``email``; ``bare_token`` stays empty."""
+    target = parse_target("alice@x.com")
+    assert target.email == "alice@x.com"
+    assert target.bare_token == ""
+
+
+def test_mention_still_wins_over_bare_token() -> None:
+    """Mention parses as ``user_id``; ``bare_token`` stays empty."""
+    target = parse_target("<@U12345|alice>")
+    assert target.user_id == "U12345"
+    assert target.bare_token == ""
+
+
+def test_token_containing_at_still_fails() -> None:
+    """A token like ``foo@`` (broken email) shouldn't be captured as a
+    bare token — it can't usefully resolve as a local-part."""
+    target = parse_target("foo@")
+    assert target.bare_token == ""
+    assert target.email == ""
+    assert target.ok is False
 
 
 @pytest.mark.parametrize(
