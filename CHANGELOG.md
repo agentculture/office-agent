@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.5] - 2026-05-05
+
+### Fixed
+
+- `SheetsAuditLog.append_many` now seeds the `audit-log` schema header
+  even when the tab was just auto-created by gspread. Auto-created tabs
+  (`add_worksheet(rows=1, cols=10)`) read back as a single phantom row
+  of empty strings, which the previous existence check treated as
+  "already populated" — the header was skipped, `audit.all()` parsed
+  row 1 as schema, and `office seats history <seat>` then returned no
+  rows even though `migrate` had written them. The check now ignores
+  rows that are entirely whitespace, so the first `append_many` against
+  a freshly created tab seeds the header and the data rows together.
+  ([#32](https://github.com/agentculture/office-agent/issues/32))
+
 ## [0.9.4] - 2026-05-05
 
 ### Fixed
