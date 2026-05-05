@@ -122,10 +122,12 @@ def _resolve_and_lookup(
     email, fail_reason = _email_from_user_id(client, user_id)
     if not email:
         return _blocks.lookup_failed(fail_reason), "lookup failed"
-    # When the caller asked about themselves, label as "you"; otherwise
-    # use the @-mention so Slack renders the name.
+    # When the caller asked about themselves, label as "you" and pick the
+    # second-person verb form ("you sit"); otherwise use the @-mention so
+    # Slack renders the name and stay third-person ("<@U…> sits").
     label = "you" if target.self_lookup else f"<@{user_id}>"
-    return _lookup(service, email, label, as_of=as_of, role=role)
+    verb = "sit" if target.self_lookup else "sits"
+    return _lookup(service, email, label, as_of=as_of, role=role, verb=verb)
 
 
 def _resolve_caller_role(client: Any, body: dict, command: dict, roles: RolesConfig | None) -> str:
@@ -175,6 +177,7 @@ def _lookup(
     *,
     as_of: str | None = None,
     role: str | None = None,
+    verb: str = "sits",
 ) -> tuple[list[dict[str, Any]], str]:
     # Both blocks and the `text` fallback use ``label`` so we never leak
     # the resolved profile email through the screen-reader / older-client
@@ -188,4 +191,7 @@ def _lookup(
     # planning callers see hidden seats with full details.
     if assignment.redacted:
         return _blocks.hidden_private(assignment, target_label=label), "occupied (private)"
-    return _blocks.occupied(assignment, target_label=label), f"{label} → {assignment.seat_id}"
+    return (
+        _blocks.occupied(assignment, target_label=label, verb=verb),
+        f"{label} → {assignment.seat_id}",
+    )

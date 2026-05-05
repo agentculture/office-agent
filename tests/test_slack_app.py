@@ -119,6 +119,8 @@ def test_plain_email_path(data_dir: Path) -> None:
 
 
 def test_no_arg_resolves_caller(data_dir: Path) -> None:
+    """No-arg ``/whereis`` resolves the caller and renders second-person.
+    Issue #27: must say ``"you sit"``, not ``"you sits"``."""
     service = _service_with_active(data_dir, "carol@example.com")
     service.assign("5-T-03", "carol@example.com")
     app = build_app(service, app=FakeSlackApp())
@@ -129,7 +131,46 @@ def test_no_arg_resolves_caller(data_dir: Path) -> None:
         command={"text": ""},
         client=client,
     )
-    assert "5-T-03" in _block_text(_last_blocks(client))
+    text = _block_text(_last_blocks(client))
+    assert "5-T-03" in text
+    # Subject is bolded by mrkdwn → ``*you* sit at`` is the rendered string.
+    assert "*you* sit at" in text
+    assert "*you* sits" not in text
+
+
+def test_email_path_renders_third_person_sits(data_dir: Path) -> None:
+    """Default branch (explicit email) keeps third-person ``"sits"``.
+    Guards against the #27 fix accidentally swapping the default verb."""
+    service = _service_with_active(data_dir, "carol@example.com")
+    service.assign("5-T-03", "carol@example.com")
+    app = build_app(service, app=FakeSlackApp())
+    client = FakeSlackClient()
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "carol@example.com"},
+        client=client,
+    )
+    text = _block_text(_last_blocks(client))
+    assert "carol@example.com* sits at" in text
+    assert "carol@example.com* sit at" not in text
+
+
+def test_at_mention_path_renders_third_person_sits(data_dir: Path) -> None:
+    """At-mention path also stays third-person (``<@U123> sits at ...``)."""
+    service = _service_with_active(data_dir, "alice@example.com")
+    service.assign("5-T-01", "alice@example.com")
+    app = build_app(service, app=FakeSlackApp())
+    client = FakeSlackClient(users={"U123": {"profile": {"email": "alice@example.com"}}})
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "<@U123|alice>"},
+        client=client,
+    )
+    text = _block_text(_last_blocks(client))
+    assert "<@U123>* sits at" in text
+    assert "you sit" not in text
 
 
 def test_no_seat_renders_helpful_message(data_dir: Path) -> None:
