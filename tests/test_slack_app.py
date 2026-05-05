@@ -622,3 +622,77 @@ def test_bare_token_disambiguation_renders_candidates(data_dir: Path) -> None:
     assert "5-T-01" in text
     assert "5-T-02" in text
     assert "Re-run with the full email" in text
+
+
+def test_bare_token_with_mrkdwn_metachars_is_escaped(data_dir: Path) -> None:
+    """PR #40 review (Copilot): a bare token containing ``<``/``>`` /
+    ``&`` / backtick must not break formatting or inject Slack control
+    sequences (``<!here>``, ``<@U…>``) when echoed back. The block
+    builders escape these before mrkdwn display, and the ``text``
+    fallback stays free of the token entirely."""
+    service = _service_with_active(data_dir)
+    app = build_app(service, app=FakeSlackApp())
+    client = FakeSlackClient()
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "<!here>"},
+        client=client,
+    )
+    posted = client.posted[-1]
+    blocks_text = _block_text(posted["blocks"])
+    # The literal ``<!here>`` must be escaped, not pinged.
+    assert "<!here>" not in blocks_text
+    assert "&lt;!here&gt;" in blocks_text
+    # And the ``text`` fallback (rendered when blocks aren't supported)
+    # must not echo the token at all.
+    assert "<!here>" not in posted["text"]
+
+
+def test_bare_token_text_fallback_does_not_leak_token(data_dir: Path) -> None:
+    """Companion to the mrkdwn-escape test: even a benign token shouldn't
+    appear in the ``text`` fallback, because Slack parses that string
+    too. We assert the no-match path's fallback is the documented
+    constant, not an interpolation of the user input."""
+    service = _service_with_active(data_dir)
+    app = build_app(service, app=FakeSlackApp())
+    client = FakeSlackClient()
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "ghost"},
+        client=client,
+    )
+    assert client.posted[-1]["text"] == "no seat found for that name"
+
+
+def test_bare_token_disambiguation_redacts_hidden_seat_id(data_dir: Path) -> None:
+    """PR #40 review (Qodo): when the disambiguation list includes a
+    redacted (hidden) entry, it must omit the ``seat_id`` to match
+    ``hidden_private``'s privacy contract — viewer-role callers can
+    see *that* there's a private match without learning where it sits."""
+    from office_cli._roles import RolesConfig
+
+    service = _service_with_active(data_dir, "alice@x.com", "alice@y.com")
+    service.assign("5-T-01", "alice@x.com")  # public
+    service.assign("5-T-02", "alice@y.com", hidden=True)  # private
+    # Empty roles config → caller is viewer → redaction fires for hidden seats.
+    roles = RolesConfig()
+    app = build_app(service, app=FakeSlackApp(), roles=roles)
+    # The caller's user_id maps to no role entry → defaults to viewer.
+    client = FakeSlackClient(users={"U999": {"profile": {"email": "viewer@x.com"}}})
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "alice"},
+        client=client,
+    )
+    text = _block_text(_last_blocks(client))
+    # Public match is fully visible.
+    assert "5-T-01" in text
+    assert "alice@x.com" in text
+    # Hidden match: floor visible, seat_id NOT, email NOT.
+    assert "tlv-floor-5" in text
+    assert "5-T-02" not in text
+    assert "alice@y.com" not in text
+    assert "occupied (private)" in text

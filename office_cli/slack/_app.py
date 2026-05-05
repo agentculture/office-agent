@@ -184,18 +184,25 @@ def _lookup_by_local_part(
     store's email local-parts. 0 → friendly error; 1 → standard
     seat-found render; 2+ → disambiguation list."""
     matches = service.find_by_local_part(token, as_of=as_of, role=role)
+    # ``text`` fallback strings stay free of ``token``: Slack parses the
+    # fallback for ``<!here>`` / ``<@U…>`` / ``<#C…>`` sequences when
+    # blocks aren't rendered, so an attacker-controlled token must not
+    # land there. The block builders escape the token for mrkdwn
+    # display; the fallback uses constants.
     if not matches:
-        return _blocks.no_match_for_token(token), f"no match for {token}"
+        return _blocks.no_match_for_token(token), "no seat found for that name"
     if len(matches) == 1:
         a = matches[0]
-        label = a.employee_email or token
+        # Use the resolved (store-derived) email as the label so even
+        # the single-match path doesn't echo the user's raw token.
+        label = a.employee_email or "(redacted)"
         if a.redacted:
             return _blocks.hidden_private(a, target_label=label), "occupied (private)"
         return (
             _blocks.occupied(a, target_label=label),
             f"{label} → {a.seat_id}",
         )
-    return _blocks.disambiguation(token, matches), f"{len(matches)} matches for {token}"
+    return _blocks.disambiguation(token, matches), f"{len(matches)} matches"
 
 
 def _lookup(
