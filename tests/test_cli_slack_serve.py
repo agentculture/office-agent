@@ -96,3 +96,52 @@ def test_whitespace_directory_ttl_uses_default() -> None:
     assert _parse_ttl_env("   ") == _DEFAULT_TTL_SECONDS
     assert _parse_ttl_env("") == _DEFAULT_TTL_SECONDS
     assert _parse_ttl_env(None) == _DEFAULT_TTL_SECONDS
+
+
+@pytest.mark.parametrize("bad", ["abc", "2.0", "-0.1", "1.5"])
+def test_invalid_fuzzy_cutoff_is_rejected(bad: str) -> None:
+    """``OFFICE_FUZZY_CUTOFF`` must be a float in [0.0, 1.0]; any
+    out-of-range or non-float value raises ``OfficeError`` so the
+    listener fails fast."""
+    from office_cli.cli._commands.slack_serve import _parse_fuzzy_cutoff_env
+    from office_cli.cli._errors import OfficeError
+
+    with pytest.raises(OfficeError) as exc:
+        _parse_fuzzy_cutoff_env(bad)
+    assert "OFFICE_FUZZY_CUTOFF" in exc.value.message
+
+
+@pytest.mark.parametrize("good", ["0.0", "0.7", "1.0", "  0.5  "])
+def test_valid_fuzzy_cutoff_parses(good: str) -> None:
+    from office_cli.cli._commands.slack_serve import _parse_fuzzy_cutoff_env
+
+    assert 0.0 <= _parse_fuzzy_cutoff_env(good) <= 1.0
+
+
+def test_whitespace_fuzzy_cutoff_uses_default() -> None:
+    from office_cli.cli._commands.slack_serve import _parse_fuzzy_cutoff_env
+    from office_cli.slack._fuzzy import DEFAULT_CUTOFF
+
+    assert _parse_fuzzy_cutoff_env(None) == DEFAULT_CUTOFF
+    assert _parse_fuzzy_cutoff_env("") == DEFAULT_CUTOFF
+    assert _parse_fuzzy_cutoff_env("   ") == DEFAULT_CUTOFF
+
+
+@pytest.mark.parametrize("bad", ["abc", "0", "-3", "1.5"])
+def test_invalid_fuzzy_limit_is_rejected(bad: str) -> None:
+    """``OFFICE_FUZZY_LIMIT`` must be a positive integer."""
+    from office_cli.cli._commands.slack_serve import _parse_fuzzy_limit_env
+    from office_cli.cli._errors import OfficeError
+
+    with pytest.raises(OfficeError) as exc:
+        _parse_fuzzy_limit_env(bad)
+    assert "OFFICE_FUZZY_LIMIT" in exc.value.message
+
+
+def test_whitespace_fuzzy_limit_uses_default() -> None:
+    from office_cli.cli._commands.slack_serve import _parse_fuzzy_limit_env
+    from office_cli.slack._fuzzy import DEFAULT_LIMIT
+
+    assert _parse_fuzzy_limit_env(None) == DEFAULT_LIMIT
+    assert _parse_fuzzy_limit_env("") == DEFAULT_LIMIT
+    assert _parse_fuzzy_limit_env("   ") == DEFAULT_LIMIT

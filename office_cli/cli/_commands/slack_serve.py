@@ -65,6 +65,9 @@ def cmd_slack_serve(args: argparse.Namespace) -> int:
     # fires on a real network call.
     directory_enabled = parse_directory_enabled_env()
     ttl_seconds = _parse_ttl_env(os.environ.get("OFFICE_SLACK_DIRECTORY_TTL"))
+    # #39: same early-validation pattern for the fuzzy resolver knobs.
+    fuzzy_cutoff = _parse_fuzzy_cutoff_env(os.environ.get("OFFICE_FUZZY_CUTOFF"))
+    fuzzy_limit = _parse_fuzzy_limit_env(os.environ.get("OFFICE_FUZZY_LIMIT"))
 
     # slack_bolt is imported lazily inside `build_app` / `run_socket_mode`
     # so a missing extra surfaces as a clear OfficeError.
@@ -97,6 +100,8 @@ def cmd_slack_serve(args: argparse.Namespace) -> int:
         app=app,
         data_dir=data_dir,
         slack_directory=slack_directory,
+        fuzzy_cutoff=fuzzy_cutoff,
+        fuzzy_limit=fuzzy_limit,
         command_name=command_name,
     )
     emit_diagnostic(f"Slack {command_name} listener starting (Socket Mode)…")
@@ -137,6 +142,55 @@ def _parse_ttl_env(raw: str | None) -> int:
             code=EXIT_ENV_ERROR,
             message=f"OFFICE_SLACK_DIRECTORY_TTL must be > 0; got {value}",
             remediation="pick a TTL ≥ 1 second, or unset to use the 300s default",
+        )
+    return value
+
+
+def _parse_fuzzy_cutoff_env(raw: str | None) -> float:
+    """Read ``OFFICE_FUZZY_CUTOFF``. Default ``0.7``; out-of-range or
+    unparseable values raise ``OfficeError`` so a misconfiguration
+    fails loudly at startup."""
+    from office_cli.slack._fuzzy import DEFAULT_CUTOFF
+
+    if raw is None or not raw.strip():
+        return DEFAULT_CUTOFF
+    try:
+        value = float(raw.strip())
+    except ValueError as err:
+        raise OfficeError(
+            code=EXIT_ENV_ERROR,
+            message=f"OFFICE_FUZZY_CUTOFF must be a float in [0.0, 1.0]; got {raw!r}",
+            remediation="set OFFICE_FUZZY_CUTOFF to a value like 0.7 (default)",
+        ) from err
+    if not 0.0 <= value <= 1.0:
+        raise OfficeError(
+            code=EXIT_ENV_ERROR,
+            message=f"OFFICE_FUZZY_CUTOFF must be in [0.0, 1.0]; got {value}",
+            remediation="pick a cutoff in [0.0, 1.0]; 0.7 is the project default",
+        )
+    return value
+
+
+def _parse_fuzzy_limit_env(raw: str | None) -> int:
+    """Read ``OFFICE_FUZZY_LIMIT``. Default ``5``; non-positive ints
+    or unparseable values raise ``OfficeError``."""
+    from office_cli.slack._fuzzy import DEFAULT_LIMIT
+
+    if raw is None or not raw.strip():
+        return DEFAULT_LIMIT
+    try:
+        value = int(raw.strip())
+    except ValueError as err:
+        raise OfficeError(
+            code=EXIT_ENV_ERROR,
+            message=f"OFFICE_FUZZY_LIMIT must be a positive int; got {raw!r}",
+            remediation="set OFFICE_FUZZY_LIMIT to a value like 5 (default)",
+        ) from err
+    if value <= 0:
+        raise OfficeError(
+            code=EXIT_ENV_ERROR,
+            message=f"OFFICE_FUZZY_LIMIT must be > 0; got {value}",
+            remediation="pick a positive cap (Slack messages cap at 50 blocks; 5 is the default)",
         )
     return value
 

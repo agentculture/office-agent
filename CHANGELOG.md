@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.9] - 2026-05-05
+
+### Added
+
+- Slack `/whereis` now resolves partial / misspelled names via a
+  third resolution tier on top of the exact local-part path
+  ([#29](https://github.com/agentculture/office-agent/issues/29)) and
+  exact roster-name path
+  ([#38](https://github.com/agentculture/office-agent/issues/38)).
+  When neither exact tier hits, a stdlib-`difflib` scorer ranks the
+  union of assignment-store local-parts and Slack roster names
+  (when the directory is enabled) against the bare token. A single
+  candidate above the cutoff — or one that exceeds the runner-up by
+  the auto-pick gap — resolves directly to the seat. Otherwise the
+  handler renders an interactive disambiguation message: one section
+  per candidate with a *This person* button. Clicking the button
+  fires a new `whereis_pick` action that re-runs the lookup against
+  the picked email and replaces the original ephemeral with the seat
+  result via `response_url`. Hidden / redacted seats keep their
+  privacy treatment through both the auto-pick and button-driven
+  paths. ([#39](https://github.com/agentculture/office-agent/issues/39))
+
+- `OFFICE_FUZZY_CUTOFF` (float in `[0.0, 1.0]`, default `0.7`) and
+  `OFFICE_FUZZY_LIMIT` (positive int, default `5`) tune the new
+  tier on the slack-serve entry point. Misconfigured values raise
+  `EXIT_ENV_ERROR` before slack-bolt construction so a bad deploy
+  doesn't get masked by a downstream `BoltError`.
+  ([#39](https://github.com/agentculture/office-agent/issues/39))
+
 ## [0.9.8] - 2026-05-05
 
 ### Added

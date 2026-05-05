@@ -14,6 +14,9 @@ from typing import Any
 
 from office_cli.seats import Assignment
 from office_cli.slack._directory import SlackUser
+from office_cli.slack._fuzzy import FuzzyCandidate
+
+DISAMBIG_FUZZY_ACTION_ID = "whereis_pick"
 
 
 def _escape_mrkdwn(s: str) -> str:
@@ -260,6 +263,72 @@ def disambiguation_users(token: str, candidates: list[SlackUser]) -> list[dict[s
             ],
         }
     )
+    return blocks
+
+
+def disambiguation_fuzzy(
+    token: str,
+    candidates: list[FuzzyCandidate],
+    *,
+    overflow: int = 0,
+) -> list[dict[str, Any]]:
+    """#39: render a fuzzy-match candidate list with a "This person"
+    button per row. The button's ``value`` carries the candidate's
+    full email so the action handler can re-run the lookup without
+    keeping per-listener state. Same mrkdwn-escape contract as
+    sibling builders.
+
+    ``overflow`` is the number of additional candidates beyond what's
+    rendered — surfaced in a context block so the caller knows to
+    refine. Slack caps a message at 50 blocks; with the issue's
+    default ``OFFICE_FUZZY_LIMIT=5`` we land far under that, but the
+    cap propagates through this builder unchanged so a higher limit
+    + overflow stays safe."""
+    safe_token = _escape_mrkdwn(token)
+    blocks: list[dict[str, Any]] = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"Did you mean one of these for `{safe_token}`?",
+            },
+        }
+    ]
+    for c in candidates:
+        rendered_label = _escape_mrkdwn(c.label or c.email)
+        rendered_email = _escape_mrkdwn(c.email)
+        blocks.append(
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*{rendered_label}* — `{rendered_email}`",
+                },
+                "accessory": {
+                    "type": "button",
+                    "action_id": DISAMBIG_FUZZY_ACTION_ID,
+                    "text": {"type": "plain_text", "text": "This person"},
+                    # ``value`` carries the full email; the action handler
+                    # routes off it without keeping listener-side state.
+                    "value": c.email,
+                },
+            }
+        )
+    if overflow > 0:
+        blocks.append(
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": (
+                            f"_…and {overflow} more — refine your search "
+                            f"(full email or `@mention`)._"
+                        ),
+                    }
+                ],
+            }
+        )
     return blocks
 
 
