@@ -16,6 +16,7 @@ from office_cli._roles import RolesConfig, resolve_roles, role_for_email
 from office_cli.cli._errors import EXIT_ENV_ERROR, OfficeError
 from office_cli.seats import SeatService
 from office_cli.slack import _blocks
+from office_cli.slack._directory import SlackUserDirectory
 from office_cli.slack._resolve import ParsedTarget, parse_target
 
 _AUTO = object()
@@ -27,6 +28,7 @@ def build_app(
     app: Any | None = None,
     roles: Any = None,
     data_dir: Path | None = None,
+    slack_directory: SlackUserDirectory | None = None,
     command_name: str = "/whereis",
 ) -> Any:
     """Register the configured slash-command listener and return the app.
@@ -50,6 +52,13 @@ def build_app(
     app) can rebind by setting ``OFFICE_SLACK_COMMAND`` on the
     ``slack-serve`` entry point. Surrounding whitespace is stripped;
     the resulting value must be non-empty and start with ``/``.
+
+    ``slack_directory`` (#38) is an optional :class:`SlackUserDirectory`
+    consulted when the bare-token MVP from #29 returns no local-part
+    match. ``None`` (the default) keeps the local-part-only behavior;
+    pass an instance to enable name → email resolution against the
+    Slack workspace roster. The slack-serve entry point constructs one
+    by default and respects ``OFFICE_SLACK_DIRECTORY=disabled``.
     """
     command_name = command_name.strip()
     if not command_name or not command_name.startswith("/"):
@@ -70,7 +79,9 @@ def build_app(
         ack()
         text = command.get("text", "")
         target = parse_target(text)
-        blocks, label = _resolve_and_lookup(service, client, body, command, target, roles)
+        blocks, label = _resolve_and_lookup(
+            service, client, body, command, target, roles, slack_directory
+        )
         # ``command`` is the slash-command payload and is the canonical
         # source for ``channel_id``/``user_id``; ``body`` is the Bolt-
         # wrapped envelope and may differ in some adapter shapes. Prefer
@@ -92,6 +103,7 @@ def _resolve_and_lookup(
     command: dict,
     target: ParsedTarget,
     roles: RolesConfig | None,
+    slack_directory: SlackUserDirectory | None = None,
 ) -> tuple[list[dict[str, Any]], str]:
     """Resolve a :class:`ParsedTarget` to an email + label and run lookup."""
     if not target.ok:
@@ -116,7 +128,13 @@ def _resolve_and_lookup(
         return _lookup(service, email, label, as_of=as_of, role=role)
 
     if target.bare_token:
-        return _lookup_by_local_part(service, target.bare_token, as_of=as_of, role=role)
+        return _lookup_by_local_part(
+            service,
+            target.bare_token,
+            as_of=as_of,
+            role=role,
+            slack_directory=slack_directory,
+        )
 
     user_id = target.user_id or command.get("user_id") or body.get("user_id", "")
     if not user_id:
@@ -179,18 +197,23 @@ def _lookup_by_local_part(
     *,
     as_of: str | None = None,
     role: str | None = None,
+    slack_directory: SlackUserDirectory | None = None,
 ) -> tuple[list[dict[str, Any]], str]:
-    """#29 MVP: ``/whereis ori.nachum`` resolves via the assignment
-    store's email local-parts. 0 → friendly error; 1 → standard
-    seat-found render; 2+ → disambiguation list."""
+    """#29 MVP + #38: ``/whereis ori.nachum`` resolves via the
+    assignment store's email local-parts; if no local-part hits and a
+    Slack directory is configured, fall through to a name lookup
+    against the workspace roster.
+
+    ``text`` fallback strings stay free of ``token``: Slack parses the
+    fallback for ``<!here>`` / ``<@U…>`` / ``<#C…>`` sequences when
+    blocks aren't rendered, so an attacker-controlled token must not
+    land there. The block builders escape the token for mrkdwn
+    display; the fallback uses constants.
+    """
     matches = service.find_by_local_part(token, as_of=as_of, role=role)
-    # ``text`` fallback strings stay free of ``token``: Slack parses the
-    # fallback for ``<!here>`` / ``<@U…>`` / ``<#C…>`` sequences when
-    # blocks aren't rendered, so an attacker-controlled token must not
-    # land there. The block builders escape the token for mrkdwn
-    # display; the fallback uses constants.
     if not matches:
-        return _blocks.no_match_for_token(token), "no seat found for that name"
+        # #38: try the Slack workspace roster for a name match.
+        return _lookup_by_slack_directory(service, token, slack_directory, as_of=as_of, role=role)
     if len(matches) == 1:
         a = matches[0]
         # Use the resolved (store-derived) email as the label so even
@@ -203,6 +226,38 @@ def _lookup_by_local_part(
             f"{label} → {a.seat_id}",
         )
     return _blocks.disambiguation(token, matches), f"{len(matches)} matches"
+
+
+def _lookup_by_slack_directory(
+    service: SeatService,
+    token: str,
+    slack_directory: SlackUserDirectory | None,
+    *,
+    as_of: str | None,
+    role: str | None,
+) -> tuple[list[dict[str, Any]], str]:
+    """#38: name-match against the Slack workspace roster, with the
+    directory's TTL cache. Disabled / unavailable directory returns
+    the local-part path's no-match block — the caller perceives a
+    single resolution chain ending in the same error.
+    """
+    if slack_directory is None or not slack_directory.enabled:
+        return _blocks.no_match_for_token(token), "no seat found for that name"
+    candidates = slack_directory.find_by_name(token)
+    if not candidates:
+        return _blocks.no_match_for_token(token), "no seat found for that name"
+    if len(candidates) == 1:
+        return _lookup(
+            service,
+            email=candidates[0].email,
+            label=candidates[0].email,
+            as_of=as_of,
+            role=role,
+        )
+    return (
+        _blocks.disambiguation_users(token, candidates),
+        f"{len(candidates)} matches",
+    )
 
 
 def _lookup(

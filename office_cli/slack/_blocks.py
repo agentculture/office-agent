@@ -13,6 +13,7 @@ import os
 from typing import Any
 
 from office_cli.seats import Assignment
+from office_cli.slack._directory import SlackUser
 
 
 def _escape_mrkdwn(s: str) -> str:
@@ -174,6 +175,51 @@ def disambiguation(token: str, matches: list[Assignment]) -> list[dict[str, Any]
             {
                 "type": "section",
                 "text": {"type": "mrkdwn", "text": line},
+            }
+        )
+    blocks.append(
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": "_Re-run with the full email to pick one._",
+                }
+            ],
+        }
+    )
+    return blocks
+
+
+def disambiguation_users(token: str, candidates: list[SlackUser]) -> list[dict[str, Any]]:
+    """#38: render the multi-section list for a Slack-roster name
+    match where ≥2 workspace users share the requested name. Each
+    candidate gets a section showing their best-available display name
+    and full email so the caller can re-run with the unambiguous
+    address. Same mrkdwn-escape contract as :func:`disambiguation`."""
+    safe_token = _escape_mrkdwn(token)
+    blocks: list[dict[str, Any]] = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"Multiple Slack users matched `{safe_token}`:",
+            },
+        }
+    ]
+    for u in candidates:
+        # Prefer display_name (what people see in Slack), fall back to
+        # real_name, then to ``name``. Strip + escape to keep the
+        # mrkdwn parser tame on user-supplied profile fields.
+        rendered_name = _escape_mrkdwn(u.display_name or u.real_name or u.name or "(unnamed)")
+        rendered_email = _escape_mrkdwn(u.email)
+        blocks.append(
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"• {rendered_name} — `{rendered_email}`",
+                },
             }
         )
     blocks.append(
