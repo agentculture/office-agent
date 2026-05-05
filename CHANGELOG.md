@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.6] - 2026-05-05
+
+### Changed
+
+- **Breaking:** `office seats move` now takes positional arguments in
+  the order `<seat_id> <email>`, matching `office seats assign`. The
+  previous order was `<email> <new_seat_id>`, which gave operators no
+  consistent mental model when alternating between the two verbs.
+  Update any scripts or muscle memory that called
+  `office seats move alice@example.com 5-T-02` to
+  `office seats move 5-T-02 alice@example.com`.
+  ([#30](https://github.com/agentculture/office-agent/issues/30))
+
+### Fixed
+
+- `office seats move` now detects the wrong-order case (`@` in the
+  first arg, none in the second) and emits a remediation hint
+  pointing at the correct invocation, instead of the previous
+  misleading `error: unknown seat: alice@example.com`.
+  ([#30](https://github.com/agentculture/office-agent/issues/30))
+
 ## [0.9.5] - 2026-05-05
 
 ### Fixed
