@@ -43,3 +43,23 @@ def test_missing_app_token(
     err = capsys.readouterr().err
     assert "SLACK_APP_TOKEN" in err
     assert "Socket Mode" in err
+
+
+def test_empty_office_slack_command_is_rejected(
+    data_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicitly-empty (or whitespace-only) ``OFFICE_SLACK_COMMAND``
+    must fail fast with a clear message, matching the pattern used for
+    ``SLACK_BOT_TOKEN`` / ``SLACK_APP_TOKEN``. Without this, the
+    truthy-or-default trick would silently revert to ``/whereis`` and
+    mask a misconfiguration."""
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
+    monkeypatch.setenv("SLACK_APP_TOKEN", "xapp-test")
+    monkeypatch.setenv("OFFICE_SLACK_COMMAND", "   ")
+    rc = main(["slack-serve", "--data-dir", str(data_dir)])
+    assert rc == 2  # EXIT_ENV_ERROR
+    err = capsys.readouterr().err
+    assert "OFFICE_SLACK_COMMAND" in err
+    assert "empty" in err

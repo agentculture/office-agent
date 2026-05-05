@@ -41,6 +41,21 @@ def cmd_slack_serve(args: argparse.Namespace) -> int:
             ),
         )
 
+    raw_command = os.environ.get("OFFICE_SLACK_COMMAND")
+    if raw_command is None:
+        command_name = "/whereis"
+    else:
+        command_name = raw_command.strip()
+        if not command_name:
+            raise OfficeError(
+                code=EXIT_ENV_ERROR,
+                message="OFFICE_SLACK_COMMAND is empty",
+                remediation=(
+                    "unset OFFICE_SLACK_COMMAND to keep the default /whereis, "
+                    "or set it to a /-prefixed slash-command name (e.g. /ai)."
+                ),
+            )
+
     data_dir = resolve_data_dir(args)
     service = build_service(data_dir, actor="slack")
 
@@ -60,8 +75,8 @@ def cmd_slack_serve(args: argparse.Namespace) -> int:
     # Pass ``data_dir`` so build_app auto-resolves the roles map from
     # ``data/offices.yaml``. Without this, every Slack caller would be
     # treated as ``viewer`` regardless of the editor/planning lists.
-    build_app(service, app=app, data_dir=data_dir)
-    emit_diagnostic("Slack /whereis listener starting (Socket Mode)…")
+    build_app(service, app=app, data_dir=data_dir, command_name=command_name)
+    emit_diagnostic(f"Slack {command_name} listener starting (Socket Mode)…")
     run_socket_mode(app, app_token)
     return 0
 
