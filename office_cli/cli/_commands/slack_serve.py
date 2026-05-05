@@ -41,21 +41,6 @@ def cmd_slack_serve(args: argparse.Namespace) -> int:
             ),
         )
 
-    data_dir = resolve_data_dir(args)
-    service = build_service(data_dir, actor="slack")
-
-    # slack_bolt is imported lazily inside `build_app` / `run_socket_mode`
-    # so a missing extra surfaces as a clear OfficeError.
-    try:
-        from slack_bolt import App
-    except ImportError as err:
-        raise OfficeError(
-            code=EXIT_ENV_ERROR,
-            message="slack-bolt is not installed",
-            remediation=("install the slack extra: pip install office-cli[slack]"),
-        ) from err
-    from office_cli.slack import build_app, run_socket_mode
-
     raw_command = os.environ.get("OFFICE_SLACK_COMMAND")
     if raw_command is None:
         command_name = "/whereis"
@@ -70,6 +55,21 @@ def cmd_slack_serve(args: argparse.Namespace) -> int:
                     "or set it to a /-prefixed slash-command name (e.g. /ai)."
                 ),
             )
+
+    data_dir = resolve_data_dir(args)
+    service = build_service(data_dir, actor="slack")
+
+    # slack_bolt is imported lazily inside `build_app` / `run_socket_mode`
+    # so a missing extra surfaces as a clear OfficeError.
+    try:
+        from slack_bolt import App
+    except ImportError as err:
+        raise OfficeError(
+            code=EXIT_ENV_ERROR,
+            message="slack-bolt is not installed",
+            remediation=("install the slack extra: pip install office-cli[slack]"),
+        ) from err
+    from office_cli.slack import build_app, run_socket_mode
 
     app = App(token=bot_token)
     # Pass ``data_dir`` so build_app auto-resolves the roles map from
