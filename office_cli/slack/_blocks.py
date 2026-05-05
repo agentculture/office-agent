@@ -9,6 +9,7 @@ Stage 7 lands roles.
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
@@ -266,17 +267,50 @@ def disambiguation_users(token: str, candidates: list[SlackUser]) -> list[dict[s
     return blocks
 
 
+def _encode_pick_value(email: str, as_of: str | None) -> str:
+    """Pack the seat-resolution context into the action button's
+    ``value`` field. Slack caps ``value`` at 2000 chars; an email +
+    a date is well under that even with JSON overhead. The action
+    handler decodes via :func:`decode_pick_value`; both functions
+    are deterministic and stdlib-only so tests don't need fixtures."""
+    payload: dict[str, str] = {"email": email}
+    if as_of:
+        payload["as_of"] = as_of
+    return json.dumps(payload, separators=(",", ":"))
+
+
+def decode_pick_value(raw: str) -> tuple[str, str | None]:
+    """Reverse :func:`_encode_pick_value`. Tolerant of the legacy
+    plain-email shape so a button minted before this change still
+    routes; never raises — a malformed payload returns ``("", None)``
+    and the caller renders an error."""
+    raw = (raw or "").strip()
+    if not raw:
+        return "", None
+    if raw.startswith("{"):
+        try:
+            payload = json.loads(raw)
+        except (ValueError, TypeError):
+            return "", None
+        if not isinstance(payload, dict):
+            return "", None
+        return (payload.get("email") or "").strip(), (payload.get("as_of") or None)
+    # Legacy shape: a bare email.
+    return raw, None
+
+
 def disambiguation_fuzzy(
     token: str,
     candidates: list[FuzzyCandidate],
     *,
     overflow: int = 0,
+    as_of: str | None = None,
 ) -> list[dict[str, Any]]:
     """#39: render a fuzzy-match candidate list with a "This person"
-    button per row. The button's ``value`` carries the candidate's
-    full email so the action handler can re-run the lookup without
-    keeping per-listener state. Same mrkdwn-escape contract as
-    sibling builders.
+    button per row. The button's ``value`` carries a JSON payload
+    ``{"email": ..., "as_of": ...}`` so the action handler can re-run
+    the lookup with the same as-of date the picker was generated
+    for. Same mrkdwn-escape contract as sibling builders.
 
     ``overflow`` is the number of additional candidates beyond what's
     rendered — surfaced in a context block so the caller knows to
@@ -308,9 +342,10 @@ def disambiguation_fuzzy(
                     "type": "button",
                     "action_id": DISAMBIG_FUZZY_ACTION_ID,
                     "text": {"type": "plain_text", "text": "This person"},
-                    # ``value`` carries the full email; the action handler
-                    # routes off it without keeping listener-side state.
-                    "value": c.email,
+                    # JSON payload carries email + as_of so the click
+                    # honors the same date window the picker was
+                    # generated for (#42 review fix).
+                    "value": _encode_pick_value(c.email, as_of),
                 },
             }
         )

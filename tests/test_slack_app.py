@@ -991,11 +991,16 @@ def test_fuzzy_disambiguation_renders_buttons_with_overflow(data_dir: Path) -> N
     # One header + two candidate sections + overflow context.
     section_blocks = [b for b in blocks if b.get("type") == "section"]
     assert len(section_blocks) == 3  # header + 2 candidates
-    # Each candidate section carries a ``This person`` button.
+    # Each candidate section carries a ``This person`` button. The
+    # value is now a JSON payload encoding ``{email, as_of}`` so the
+    # action handler can preserve the date window across the click.
+    from office_cli.slack._blocks import decode_pick_value
+
     buttons = [b.get("accessory") for b in blocks if isinstance(b.get("accessory"), dict)]
     assert len(buttons) == 2
     assert all(btn.get("action_id") == "whereis_pick" for btn in buttons)
-    assert all(btn.get("value", "").endswith("@example.com") for btn in buttons)
+    decoded_emails = [decode_pick_value(btn.get("value", ""))[0] for btn in buttons]
+    assert all(e.endswith("@example.com") for e in decoded_emails)
     # Overflow context block reports the remaining candidates.
     text = _block_text(blocks)
     assert "more — refine" in text
@@ -1066,3 +1071,164 @@ def test_fuzzy_path_does_not_regress_exact_local_part(data_dir: Path) -> None:
     # local-part exact uses the same value, so this assertion still
     # holds for the first-tier resolution.
     assert "ori.nachum@tipalti.com" in text
+
+
+# ----------------------------------------------------------------------
+# #42 review fixes
+# ----------------------------------------------------------------------
+
+
+def test_fuzzy_pool_excludes_hidden_seat_for_viewer(data_dir: Path) -> None:
+    """PR #42 review (Qodo + Copilot, security): the fuzzy pool must
+    not surface hidden-seat occupants to viewer-role callers, or the
+    auto-pick path would render their email + redacted seat — leaking
+    identity. With the gate, viewers fall through to no-match
+    instead.
+    """
+    from office_cli._roles import RolesConfig
+
+    service = _service_with_active(data_dir, "alice.exec@example.com")
+    service.assign("5-T-04", "alice.exec@example.com", hidden=True)
+    # Empty roles config → caller is viewer.
+    roles = RolesConfig()
+    app = build_app(service, app=FakeSlackApp(), roles=roles, fuzzy_cutoff=0.4, fuzzy_gap=0.0)
+    client = FakeSlackClient(users={"U999": {"profile": {"email": "viewer@x.com"}}})
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "alice"},
+        client=client,
+    )
+    text = _block_text(_last_blocks(client))
+    # No leak: email and seat for the hidden assignment must not surface.
+    assert "alice.exec@example.com" not in text
+    assert "5-T-04" not in text
+
+
+def test_fuzzy_pool_includes_hidden_seat_for_full_access(data_dir: Path) -> None:
+    """Sister test: editors / planning roles see hidden-seat
+    occupants in the fuzzy pool — the redaction is viewer-specific."""
+    from office_cli._roles import RolesConfig
+
+    service = _service_with_active(data_dir, "alice.exec@example.com")
+    service.assign("5-T-04", "alice.exec@example.com", hidden=True)
+    # Caller is mapped as editor → full access.
+    roles = RolesConfig(editor=frozenset({"editor@x.com"}))
+    app = build_app(service, app=FakeSlackApp(), roles=roles, fuzzy_cutoff=0.4, fuzzy_gap=0.0)
+    client = FakeSlackClient(users={"U999": {"profile": {"email": "editor@x.com"}}})
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "alice"},
+        client=client,
+    )
+    text = _block_text(_last_blocks(client))
+    # Editor sees full details for hidden seats.
+    assert "alice.exec@example.com" in text
+    assert "5-T-04" in text
+
+
+def test_fuzzy_auto_pick_honors_full_ranked_runner_up(data_dir: Path) -> None:
+    """PR #42 review (Qodo): with ``fuzzy_limit=1`` the previous
+    implementation auto-picked from the truncated render list,
+    ignoring an actual runner-up. With the fix, ``auto_pick`` runs
+    over the full ranked list and refuses to pick when the gap
+    isn't met."""
+    service = _service_with_active(
+        data_dir, "alice@example.com", "alica@example.com", "alice.smith@example.com"
+    )
+    service.assign("5-T-01", "alice@example.com")
+    service.assign("5-T-02", "alica@example.com")
+    service.assign("5-T-03", "alice.smith@example.com")
+    # Limit=1 would render only the top hit; the fix runs auto_pick
+    # against the full ranked list so the runner-up still blocks
+    # the auto-pick.
+    app = build_app(
+        service,
+        app=FakeSlackApp(),
+        fuzzy_cutoff=0.4,
+        fuzzy_limit=1,
+        fuzzy_gap=0.5,
+    )
+    client = FakeSlackClient()
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "alic"},
+        client=client,
+    )
+    text = _block_text(_last_blocks(client))
+    # Picker (not auto-pick): the disambiguation header is rendered.
+    assert "Did you mean one of these" in text
+    # Overflow context reports the rest (we limited render to 1).
+    assert "more — refine" in text
+
+
+def test_pick_action_preserves_as_of_from_button(data_dir: Path) -> None:
+    """PR #42 review (Qodo + Copilot): the picker button now encodes
+    ``{email, as_of}`` so a click against a future-dated query
+    re-runs the lookup with the same window, not today."""
+    import json
+
+    service = _service_with_active(data_dir, "alice.future@example.com")
+    # Assign with an effective_from in the future (past today=2026-05-05).
+    service.assign("5-T-05", "alice.future@example.com", effective_from="2027-01-01")
+    app = build_app(service, app=FakeSlackApp())
+    client = FakeSlackClient()
+
+    # Button value carries ``{email, as_of=2027-06-01}`` — a click
+    # at run-time should resolve against that window.
+    encoded = json.dumps({"email": "alice.future@example.com", "as_of": "2027-06-01"})
+    [payload] = _invoke_pick_action(app, encoded, client)
+    text = _block_text(payload["blocks"])
+    # The future-dated assignment is in-window for as_of=2027-06-01,
+    # so the seat surfaces. Without the fix (always today=2026-05-05),
+    # the assignment would render as no_seat.
+    assert "5-T-05" in text
+
+
+def test_pick_action_decodes_legacy_plain_email_value(data_dir: Path) -> None:
+    """Backwards-compatibility: a button minted before this fix
+    carried just the email as ``value``. ``decode_pick_value`` still
+    routes those without erroring."""
+    service = _service_with_active(data_dir, "alice@example.com")
+    service.assign("5-T-01", "alice@example.com")
+    app = build_app(service, app=FakeSlackApp())
+    client = FakeSlackClient()
+
+    [payload] = _invoke_pick_action(app, "alice@example.com", client)
+    text = _block_text(payload["blocks"])
+    assert "5-T-01" in text
+
+
+def test_fuzzy_pool_excludes_inactive_employees(data_dir: Path) -> None:
+    """PR #42 review (Qodo + Copilot): an offboarded employee — one
+    whose email isn't in the directory's ``is_active`` set — must not
+    surface as a fuzzy hit even if their assignment row still exists.
+    """
+    service = _service_with_active(data_dir, "active.alice@example.com")
+    service.assign("5-T-01", "active.alice@example.com")
+    # Stash a row for someone the directory will reject.
+    service.store.upsert(
+        # Use the public API so audit/effective-window are coherent.
+        service.assign.__self__.store.list()[0].__class__(
+            seat_id="5-T-02",
+            floor="tlv-floor-5",
+            employee_email="ghost.alice@example.com",
+            last_updated="2026-05-01T00:00:01Z",
+        )
+    )
+    app = build_app(service, app=FakeSlackApp(), fuzzy_cutoff=0.4, fuzzy_gap=0.0)
+    client = FakeSlackClient()
+    _invoke(
+        app,
+        body={"channel_id": "C1", "user_id": "U999"},
+        command={"text": "alice"},
+        client=client,
+    )
+    text = _block_text(_last_blocks(client))
+    # Active alice is reachable.
+    assert "active.alice@example.com" in text or "5-T-01" in text
+    # Ghost alice (not in the directory) must not surface.
+    assert "ghost.alice@example.com" not in text
+    assert "5-T-02" not in text

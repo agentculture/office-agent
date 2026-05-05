@@ -127,15 +127,25 @@ def test_whitespace_fuzzy_cutoff_uses_default() -> None:
     assert _parse_fuzzy_cutoff_env("   ") == DEFAULT_CUTOFF
 
 
-@pytest.mark.parametrize("bad", ["abc", "0", "-3", "1.5"])
+@pytest.mark.parametrize("bad", ["abc", "0", "-3", "1.5", "26", "999"])
 def test_invalid_fuzzy_limit_is_rejected(bad: str) -> None:
-    """``OFFICE_FUZZY_LIMIT`` must be a positive integer."""
+    """``OFFICE_FUZZY_LIMIT`` must be a positive integer at or below
+    the safe cap. PR #42 review (Qodo + Copilot): without the upper
+    bound, the picker can exceed Slack's 50-block cap and silently
+    break ``chat.postEphemeral`` at runtime."""
     from office_cli.cli._commands.slack_serve import _parse_fuzzy_limit_env
     from office_cli.cli._errors import OfficeError
 
     with pytest.raises(OfficeError) as exc:
         _parse_fuzzy_limit_env(bad)
     assert "OFFICE_FUZZY_LIMIT" in exc.value.message
+
+
+def test_max_fuzzy_limit_accepted() -> None:
+    """The cap itself is a valid value — boundary check."""
+    from office_cli.cli._commands.slack_serve import _MAX_FUZZY_LIMIT, _parse_fuzzy_limit_env
+
+    assert _parse_fuzzy_limit_env(str(_MAX_FUZZY_LIMIT)) == _MAX_FUZZY_LIMIT
 
 
 def test_whitespace_fuzzy_limit_uses_default() -> None:

@@ -171,9 +171,20 @@ def _parse_fuzzy_cutoff_env(raw: str | None) -> float:
     return value
 
 
+_MAX_FUZZY_LIMIT = 25
+
+
 def _parse_fuzzy_limit_env(raw: str | None) -> int:
-    """Read ``OFFICE_FUZZY_LIMIT``. Default ``5``; non-positive ints
-    or unparseable values raise ``OfficeError``."""
+    """Read ``OFFICE_FUZZY_LIMIT``. Default ``5``; must be in
+    ``[1, _MAX_FUZZY_LIMIT]``. Out-of-range or unparseable values
+    raise ``OfficeError``.
+
+    The upper bound exists because Slack hard-caps a message at 50
+    blocks; the picker uses 1 header + 1 section per candidate +
+    optional overflow context, so a runaway env-var would silently
+    break ``chat.postEphemeral`` at runtime. 25 leaves comfortable
+    headroom for that ceiling, the overflow line, and any future
+    decoration."""
     from office_cli.slack._fuzzy import DEFAULT_LIMIT
 
     if raw is None or not raw.strip():
@@ -191,6 +202,15 @@ def _parse_fuzzy_limit_env(raw: str | None) -> int:
             code=EXIT_ENV_ERROR,
             message=f"OFFICE_FUZZY_LIMIT must be > 0; got {value}",
             remediation="pick a positive cap (Slack messages cap at 50 blocks; 5 is the default)",
+        )
+    if value > _MAX_FUZZY_LIMIT:
+        raise OfficeError(
+            code=EXIT_ENV_ERROR,
+            message=(
+                f"OFFICE_FUZZY_LIMIT={value} exceeds the safe cap of "
+                f"{_MAX_FUZZY_LIMIT} (Slack messages hard-cap at 50 blocks)"
+            ),
+            remediation=f"pick a limit ≤ {_MAX_FUZZY_LIMIT}; 5 is the project default",
         )
     return value
 

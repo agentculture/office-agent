@@ -11,8 +11,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from office_cli._dates import parse_iso_date, today_iso_date
-from office_cli._roles import RolesConfig, resolve_roles, role_for_email
+from office_cli._dates import is_effective, parse_iso_date, today_iso_date
+from office_cli._roles import RolesConfig, is_full_access, resolve_roles, role_for_email
 from office_cli.cli._errors import EXIT_ENV_ERROR, OfficeError
 from office_cli.seats import SeatService
 from office_cli.slack import _blocks
@@ -122,10 +122,10 @@ def build_app(
         )
 
     # #39: handle the "This person" button on a fuzzy disambiguation
-    # message. The button's ``value`` carries the picked candidate's
-    # full email, so we re-run the seat lookup through ``_lookup`` and
-    # ``respond`` with ``replace_original=True`` to swap the picker
-    # for the seat result inline. ``respond`` is Bolt's
+    # message. The button's ``value`` carries a JSON payload
+    # ``{"email": ..., "as_of": ...}`` so we can re-run the seat
+    # lookup against the *same* as-of window the picker was
+    # generated for (#42 review fix). ``respond`` is Bolt's
     # ``response_url`` shortcut; tests pass a recorder.
     @app.action(_blocks.DISAMBIG_FUZZY_ACTION_ID)
     def _handle_pick(
@@ -136,7 +136,8 @@ def build_app(
     ) -> None:
         ack()
         actions = body.get("actions") or []
-        email = (actions[0].get("value", "").strip() if actions else "").strip()
+        raw_value = actions[0].get("value", "") if actions else ""
+        email, encoded_as_of = _blocks.decode_pick_value(raw_value)
         if not email:
             respond(
                 {
@@ -152,7 +153,10 @@ def build_app(
         # can read it the same way.
         synthetic_command = {"user_id": (body.get("user") or {}).get("id", "")}
         role = _resolve_caller_role(client, body, synthetic_command, roles)
-        as_of = today_iso_date(service._clock)
+        # Honor the encoded ``as_of`` if present; otherwise default to
+        # today (no_arg slash command path) so the click never resolves
+        # against an empty / past-window state by accident.
+        as_of = encoded_as_of or today_iso_date(service._clock)
         blocks, label = _lookup(service, email, label=email, as_of=as_of, role=role)
         respond({"replace_original": True, "blocks": blocks, "text": label})
 
@@ -373,16 +377,19 @@ def _lookup_by_fuzzy(
     :func:`build_app`, which re-runs the seat lookup against the
     chosen email.
     """
-    pool = list(_build_fuzzy_pool(service, slack_directory))
-    # Rank with one extra slot beyond ``limit`` so we can compute the
-    # overflow without a second pass — easier to read than a separate
-    # length query into the candidate iterator.
-    ranked = rank_candidates(token, pool, cutoff=cutoff, limit=limit + 1)
+    pool = list(_build_fuzzy_pool(service, slack_directory, as_of=as_of, role=role))
+    # Rank the FULL pool (no ``limit + 1`` cap) so:
+    #   * ``auto_pick`` sees the true runner-up — capping at
+    #     ``limit + 1`` would let ``fuzzy_limit=1`` auto-pick even
+    #     when many other candidates are within the gap.
+    #   * the overflow count reflects every above-cutoff hit, not
+    #     just one beyond the render slice.
+    # The cutoff already filters useless candidates, so a ranked
+    # list at v1 scale stays small.
+    ranked = rank_candidates(token, pool, cutoff=cutoff, limit=len(pool) or 1)
     if not ranked:
         return _blocks.no_match_for_token(token), "no seat found for that name"
-    overflow = max(0, len(ranked) - limit)
-    rendered = ranked[:limit]
-    picked = auto_pick(rendered, gap=gap)
+    picked = auto_pick(ranked, gap=gap)
     if picked is not None:
         return _lookup(
             service,
@@ -391,8 +398,10 @@ def _lookup_by_fuzzy(
             as_of=as_of,
             role=role,
         )
+    rendered = ranked[:limit]
+    overflow = max(0, len(ranked) - limit)
     return (
-        _blocks.disambiguation_fuzzy(token, rendered, overflow=overflow),
+        _blocks.disambiguation_fuzzy(token, rendered, overflow=overflow, as_of=as_of),
         f"{len(rendered)} matches",
     )
 
@@ -400,26 +409,60 @@ def _lookup_by_fuzzy(
 def _build_fuzzy_pool(
     service: SeatService,
     slack_directory: SlackUserDirectory | None,
+    *,
+    as_of: str | None,
+    role: str | None,
 ) -> Iterable[tuple[str, str]]:
-    """Yield ``(label, email)`` candidates for the fuzzy ranker.
+    """Yield ``(label, email)`` candidates for the fuzzy ranker, with
+    the same eligibility rules ``SeatService.find_by_local_part`` /
+    ``whereis`` apply.
+
+    For each assignment in the store:
+
+    * non-empty email; otherwise skip (no useful resolution target).
+    * for non-full-access (viewer) roles: skip ``hidden=True`` rows
+      entirely. The privacy contract behind ``hidden_private`` is
+      "viewers don't learn where this person sits"; surfacing the
+      email in the disambiguation list — even with the seat
+      redacted post-pick — defeats the gate. Track these emails in
+      ``excluded`` so the Slack-roster contribution can drop them
+      too (a hidden-seat occupant who shows up under their Slack
+      display name would otherwise route around the local-part skip).
+    * directory ``is_active`` filter: an offboarded employee's row
+      shouldn't surface as a fuzzy hit.
+    * ``as_of`` window: same gate ``whereis`` enforces.
+
+    For the Slack roster contribution: include every cached user
+    whose email isn't in ``excluded``. We don't apply
+    ``directory.is_active`` here because it's a different identity
+    space (Slack workspace, not BambooHR), and ``_lookup`` post-pick
+    will still apply the gate via ``service.whereis``.
 
     Order matters for ``rank_candidates``'s "first occurrence wins on
-    tie" rule: emit assignment-store local-parts first (the strongly
-    typed source — these are people we can definitely seat) then the
-    Slack roster (which may include people without seats). Empty
-    emails are skipped at the ranker layer too, so we don't need to
-    pre-filter here.
+    tie" rule: emit local-parts first (the strong source — these
+    are people we can definitely seat) then the Slack roster.
     """
+    full_access = is_full_access(role)
+    excluded: set[str] = set()
     for a in service.store.list():
         email = (a.employee_email or "").strip()
         if not email or "@" not in email:
+            continue
+        if not full_access and a.hidden:
+            excluded.add(email.lower())
+            continue
+        if not service.directory.is_active(email):
+            continue
+        if as_of is not None and not is_effective(a, as_of):
             continue
         local_part = email.split("@", 1)[0]
         yield (local_part, email)
     if slack_directory is not None and slack_directory.enabled:
         for u in slack_directory.iter_users():
+            if not u.email or u.email.lower() in excluded:
+                continue
             label = u.display_name or u.real_name or u.name or ""
-            if label and u.email:
+            if label:
                 yield (label, u.email)
 
 
