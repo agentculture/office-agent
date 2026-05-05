@@ -442,8 +442,23 @@ def _build_fuzzy_pool(
     tie" rule: emit local-parts first (the strong source — these
     are people we can definitely seat) then the Slack roster.
     """
-    full_access = is_full_access(role)
     excluded: set[str] = set()
+    yield from _yield_eligible_local_parts(
+        service, as_of=as_of, full_access=is_full_access(role), excluded=excluded
+    )
+    yield from _yield_eligible_roster(slack_directory, excluded=excluded)
+
+
+def _yield_eligible_local_parts(
+    service: SeatService,
+    *,
+    as_of: str | None,
+    full_access: bool,
+    excluded: set[str],
+) -> Iterable[tuple[str, str]]:
+    """Local-part contribution to the fuzzy pool. Mutates ``excluded``
+    so the roster contribution can drop the same hidden-seat
+    occupants if their display name matches."""
     for a in service.store.list():
         email = (a.employee_email or "").strip()
         if not email or "@" not in email:
@@ -455,15 +470,25 @@ def _build_fuzzy_pool(
             continue
         if as_of is not None and not is_effective(a, as_of):
             continue
-        local_part = email.split("@", 1)[0]
-        yield (local_part, email)
-    if slack_directory is not None and slack_directory.enabled:
-        for u in slack_directory.iter_users():
-            if not u.email or u.email.lower() in excluded:
-                continue
-            label = u.display_name or u.real_name or u.name or ""
-            if label:
-                yield (label, u.email)
+        yield (email.split("@", 1)[0], email)
+
+
+def _yield_eligible_roster(
+    slack_directory: SlackUserDirectory | None,
+    *,
+    excluded: set[str],
+) -> Iterable[tuple[str, str]]:
+    """Slack-roster contribution. Drops users whose email is in
+    ``excluded`` (the hidden-seat-for-viewer gate from the local-part
+    pass)."""
+    if slack_directory is None or not slack_directory.enabled:
+        return
+    for u in slack_directory.iter_users():
+        if not u.email or u.email.lower() in excluded:
+            continue
+        label = u.display_name or u.real_name or u.name or ""
+        if label:
+            yield (label, u.email)
 
 
 def _lookup(
