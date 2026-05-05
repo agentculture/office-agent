@@ -32,6 +32,8 @@ def test_double_assign_emits_error(data_dir: Path, capsys: pytest.CaptureFixture
     captured = capsys.readouterr()
     assert "already assigned" in captured.err
     assert "hint:" in captured.err
+    # Remediation must reflect the post-0.9.6 ``move`` order (seat first).
+    assert "office seats move 5-T-02 alice@example.com" in captured.err
 
 
 def test_move_atomic(data_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -50,9 +52,9 @@ def test_move_atomic(data_dir: Path, capsys: pytest.CaptureFixture[str]) -> None
 def test_move_rejects_swapped_order_with_hint(
     data_dir: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Issue #30: passing ``email seat`` (the pre-0.9.6 order or the
-    assign-mirror muscle memory) is rejected with a remediation that
-    shows the correct order, instead of the previous misleading
+    """Issue #30: passing ``email seat`` (the pre-0.9.6 ``move`` order)
+    is rejected with a remediation that shows the correct order,
+    instead of the previous misleading
     "unknown seat: alice@example.com" error."""
     main(["seats", "assign", "5-T-01", "alice@example.com", *_data(data_dir)])
     capsys.readouterr()

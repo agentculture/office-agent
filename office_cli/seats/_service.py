@@ -139,7 +139,7 @@ class SeatService:
                     f"{email} is already assigned to {existing_for_email.seat_id}; "
                     "an employee can hold at most one seat globally"
                 ),
-                remediation=f"to move them, run: office seats move {email} {seat_id}",
+                remediation=f"to move them, run: office seats move {seat_id} {email}",
             )
         current = self.store.get(seat_id)
         old_email = current.employee_email if current else ""

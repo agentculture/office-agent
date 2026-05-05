@@ -52,7 +52,7 @@ office floors list --json
 office floors validate floors/tlv-floor-5.svg
 office seats list --vacant
 office seats assign 5-T-01 alice@example.com
-office seats move alice@example.com 5-T-02
+office seats move 5-T-02 alice@example.com
 office seats history 5-T-01 --json
 office whereis alice@example.com
 ```
