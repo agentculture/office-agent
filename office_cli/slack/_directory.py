@@ -90,6 +90,13 @@ class SlackUserDirectory:
         self._cache_at: float = 0.0
         self._last_attempt_at: float = 0.0
         self._has_cache = False
+        # Distinct from ``_has_cache``: tracks whether *any* refresh
+        # attempt has run, so a failed first fetch still gates
+        # subsequent calls within the TTL. Without this, ``now=0.0``
+        # under a deterministic clock would leave the
+        # ``_last_attempt_at`` gate falsy and bypass rate-limiting on
+        # the failure path.
+        self._attempted_once = False
 
     @property
     def enabled(self) -> bool:
@@ -114,11 +121,17 @@ class SlackUserDirectory:
         self._cache_at = 0.0
         self._last_attempt_at = 0.0
         self._has_cache = False
+        self._attempted_once = False
 
     def _refresh_if_stale(self) -> None:
         now = self._clock()
-        if self._has_cache and (now - self._last_attempt_at) < self._ttl:
+        # Gate every refresh on ``_attempted_once`` (success or failure)
+        # so a Slack outage on the first call doesn't turn into a
+        # request storm — ``_has_cache`` would only be True after a
+        # successful fetch, leaving the failure path uncovered.
+        if self._attempted_once and (now - self._last_attempt_at) < self._ttl:
             return
+        self._attempted_once = True
         try:
             users = list(_fetch_all(self._client))
         except Exception as err:  # noqa: BLE001 — fail-open
@@ -148,28 +161,36 @@ def _fetch_all(client: Any) -> Iterable[SlackUser]:
 
     Skips bots, deleted users, and users without an email — none of
     those can be resolved to a seat assignment, so keeping them in the
-    cache wastes memory and makes ambiguous matches worse.
+    cache wastes memory and makes ambiguous matches worse. The
+    per-page filter+dedup loop lives in :func:`_yield_unique_users` so
+    this function stays under SonarCloud's cognitive-complexity cap.
     """
     cursor: str | None = None
     seen_user_ids: set[str] = set()
     while True:
-        resp = client.users_list(cursor=cursor)
-        members = (resp or {}).get("members") or []
-        for raw in members:
-            user = _user_from_member(raw)
-            if user is None:
-                continue
-            if user.user_id in seen_user_ids:
-                # Defensive: Slack has been observed to repeat entries
-                # across cursor boundaries on some endpoints. Cheap to
-                # guard, expensive to debug if it happens.
-                continue
-            seen_user_ids.add(user.user_id)
-            yield user
-        meta = (resp or {}).get("response_metadata") or {}
+        resp = client.users_list(cursor=cursor) or {}
+        members = resp.get("members") or []
+        yield from _yield_unique_users(members, seen_user_ids)
+        meta = resp.get("response_metadata") or {}
         cursor = (meta.get("next_cursor") or "").strip()
         if not cursor:
             return
+
+
+def _yield_unique_users(
+    members: Iterable[dict[str, Any]], seen_user_ids: set[str]
+) -> Iterable[SlackUser]:
+    """Filter out bots/deleted/no-email entries and dedupe by
+    ``user_id``. ``seen_user_ids`` is mutated across pages so cursor
+    repeats (rare but observed) yield each user exactly once."""
+    for raw in members:
+        user = _user_from_member(raw)
+        if user is None:
+            continue
+        if user.user_id in seen_user_ids:
+            continue
+        seen_user_ids.add(user.user_id)
+        yield user
 
 
 def _user_from_member(raw: dict[str, Any]) -> SlackUser | None:

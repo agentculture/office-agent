@@ -201,6 +201,34 @@ def test_first_fetch_failure_returns_empty_without_raising() -> None:
     assert d.find_by_name("Alice") == []
 
 
+def test_first_fetch_failure_rate_limits_subsequent_calls() -> None:
+    """PR #41 review (Qodo + Copilot): a first-fetch failure must not
+    bypass the TTL gate. Without the fix, every subsequent
+    ``find_by_name`` re-calls ``users.list`` because ``_has_cache``
+    stays False — turning a Slack outage into a request storm.
+    """
+    now = [0.0]
+
+    def clock() -> float:
+        return now[0]
+
+    client = FakeSlackDirectoryClient([])
+    client.errors.extend([RuntimeError("slack down"), RuntimeError("slack down")])
+    d = SlackUserDirectory(client, cache_ttl_seconds=300, clock=clock)
+    # First call: attempts the fetch, fails, returns [].
+    assert d.find_by_name("Alice") == []
+    assert len(client.calls) == 1
+    # Second call within the TTL window: must not retry.
+    now[0] = 100.0
+    assert d.find_by_name("Alice") == []
+    assert len(client.calls) == 1
+    # Third call past the TTL: fetch retried (queued error means it
+    # fails again, but the *attempt* should fire).
+    now[0] = 1000.0
+    assert d.find_by_name("Alice") == []
+    assert len(client.calls) == 2
+
+
 def test_invalidate_forces_refetch() -> None:
     client = FakeSlackDirectoryClient([_resp([_alice()]), _resp([_alice()])])
     d = SlackUserDirectory(client)

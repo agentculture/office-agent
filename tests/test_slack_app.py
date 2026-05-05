@@ -777,6 +777,69 @@ def test_disabled_slack_directory_keeps_legacy_no_match_path(data_dir: Path) -> 
     assert "Couldn't find a seat for `ghost`" in text
 
 
+def test_disambiguation_users_caps_render_with_overflow_hint(data_dir: Path) -> None:
+    """PR #41 review (Copilot): Slack messages cap at 50 blocks; a
+    common name in a large workspace can match dozens of users. The
+    builder must render at most ``_DISAMBIG_CANDIDATE_LIMIT``
+    candidates and add a context block reporting the rest, so
+    ``chat.postEphemeral`` doesn't reject the payload silently."""
+    from office_cli.slack._blocks import _DISAMBIG_CANDIDATE_LIMIT, disambiguation_users
+    from office_cli.slack._directory import SlackUser
+
+    candidates = [
+        SlackUser(
+            user_id=f"U_{i}",
+            display_name=f"Alex {i}",
+            real_name=f"Alex {i}",
+            name=f"alex.{i}",
+            email=f"alex.{i}@example.com",
+        )
+        for i in range(25)
+    ]
+    blocks = disambiguation_users("alex", candidates)
+
+    # Header + at-most-cap sections + overflow context + final hint.
+    section_blocks = [b for b in blocks if b.get("type") == "section"]
+    assert len(section_blocks) == 1 + _DISAMBIG_CANDIDATE_LIMIT  # header + capped list
+
+    # Overflow context block reports the remainder.
+    text = _block_text(blocks)
+    overflow = 25 - _DISAMBIG_CANDIDATE_LIMIT
+    assert f"…and {overflow} more" in text
+    assert "Re-run with the full email" in text
+
+    # Total payload stays well under Slack's 50-block ceiling.
+    assert len(blocks) < 50
+
+
+def test_disambiguation_users_no_overflow_hint_when_under_cap(data_dir: Path) -> None:
+    """When candidate count is at or below the cap, no overflow context
+    block is added — only the standard "re-run with full email" hint."""
+    from office_cli.slack._blocks import disambiguation_users
+    from office_cli.slack._directory import SlackUser
+
+    candidates = [
+        SlackUser(
+            user_id="U_A",
+            display_name="Alice",
+            real_name="Alice A",
+            name="alice.a",
+            email="alice.a@example.com",
+        ),
+        SlackUser(
+            user_id="U_B",
+            display_name="Alice",
+            real_name="Alice B",
+            name="alice.b",
+            email="alice.b@example.com",
+        ),
+    ]
+    blocks = disambiguation_users("Alice", candidates)
+    text = _block_text(blocks)
+    assert "more — refine" not in text
+    assert "Re-run with the full email" in text
+
+
 def test_local_part_wins_before_slack_directory(data_dir: Path) -> None:
     """The Slack directory is consulted only when the local-part path
     misses; an existing assignment short-circuits the API call."""

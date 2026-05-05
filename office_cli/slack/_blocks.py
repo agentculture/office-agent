@@ -191,12 +191,22 @@ def disambiguation(token: str, matches: list[Assignment]) -> list[dict[str, Any]
     return blocks
 
 
+_DISAMBIG_CANDIDATE_LIMIT = 10
+
+
 def disambiguation_users(token: str, candidates: list[SlackUser]) -> list[dict[str, Any]]:
     """#38: render the multi-section list for a Slack-roster name
     match where ≥2 workspace users share the requested name. Each
     candidate gets a section showing their best-available display name
     and full email so the caller can re-run with the unambiguous
-    address. Same mrkdwn-escape contract as :func:`disambiguation`."""
+    address. Same mrkdwn-escape contract as :func:`disambiguation`.
+
+    Slack caps a message at 50 blocks total. A common name in a large
+    workspace can match dozens of users, which would push us past
+    that limit and silently break ``chat.postEphemeral``. Cap the
+    rendered candidates at :data:`_DISAMBIG_CANDIDATE_LIMIT` and add
+    a "…and N more" context line so the caller knows to refine.
+    """
     safe_token = _escape_mrkdwn(token)
     blocks: list[dict[str, Any]] = [
         {
@@ -207,7 +217,9 @@ def disambiguation_users(token: str, candidates: list[SlackUser]) -> list[dict[s
             },
         }
     ]
-    for u in candidates:
+    rendered = candidates[:_DISAMBIG_CANDIDATE_LIMIT]
+    overflow = len(candidates) - len(rendered)
+    for u in rendered:
         # Prefer display_name (what people see in Slack), fall back to
         # real_name, then to ``name``. Strip + escape to keep the
         # mrkdwn parser tame on user-supplied profile fields.
@@ -220,6 +232,21 @@ def disambiguation_users(token: str, candidates: list[SlackUser]) -> list[dict[s
                     "type": "mrkdwn",
                     "text": f"• {rendered_name} — `{rendered_email}`",
                 },
+            }
+        )
+    if overflow:
+        blocks.append(
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": (
+                            f"_…and {overflow} more — refine your query "
+                            f"(full email or `@mention`)._"
+                        ),
+                    }
+                ],
             }
         )
     blocks.append(

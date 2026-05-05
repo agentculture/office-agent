@@ -65,7 +65,7 @@ def test_empty_office_slack_command_is_rejected(
     assert "empty" in err
 
 
-@pytest.mark.parametrize("bad", ["abc", "0", "-5", "  "])
+@pytest.mark.parametrize("bad", ["abc", "0", "-5"])
 def test_invalid_directory_ttl_is_rejected(
     bad: str,
     data_dir: Path,
@@ -74,18 +74,25 @@ def test_invalid_directory_ttl_is_rejected(
 ) -> None:
     """``OFFICE_SLACK_DIRECTORY_TTL`` is parsed before slack-bolt
     starts; non-positive ints / non-ints fail fast with a clear
-    remediation. ``"  "`` is treated as unset and falls back to the
-    default — exclude it from the bad-value sweep when it would
-    otherwise reach the bolt-import path."""
+    remediation, so a misconfigured deployment doesn't get masked by
+    a downstream BoltError."""
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
     monkeypatch.setenv("SLACK_APP_TOKEN", "xapp-test")
     monkeypatch.setenv("OFFICE_SLACK_DIRECTORY_TTL", bad)
-    if bad.strip() == "":
-        # Whitespace-only TTL is treated as unset → would proceed to
-        # bolt's network init, which we don't want to exercise here.
-        # The behavior is verified by the other parametrize cases.
-        return
     rc = main(["slack-serve", "--data-dir", str(data_dir)])
     assert rc == 2
     err = capsys.readouterr().err
     assert "OFFICE_SLACK_DIRECTORY_TTL" in err
+
+
+def test_whitespace_directory_ttl_uses_default() -> None:
+    """``OFFICE_SLACK_DIRECTORY_TTL="   "`` (whitespace-only) is
+    treated as unset and falls back to the default. Asserted against
+    the parse helper directly so the test doesn't have to spin up
+    slack-bolt; the integration path is exercised by the bot-token
+    happy-path tests."""
+    from office_cli.cli._commands.slack_serve import _DEFAULT_TTL_SECONDS, _parse_ttl_env
+
+    assert _parse_ttl_env("   ") == _DEFAULT_TTL_SECONDS
+    assert _parse_ttl_env("") == _DEFAULT_TTL_SECONDS
+    assert _parse_ttl_env(None) == _DEFAULT_TTL_SECONDS
