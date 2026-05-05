@@ -9,11 +9,15 @@ Stage 7 lands roles.
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
 from office_cli.seats import Assignment
 from office_cli.slack._directory import SlackUser
+from office_cli.slack._fuzzy import FuzzyCandidate
+
+DISAMBIG_FUZZY_ACTION_ID = "whereis_pick"
 
 
 def _escape_mrkdwn(s: str) -> str:
@@ -260,6 +264,106 @@ def disambiguation_users(token: str, candidates: list[SlackUser]) -> list[dict[s
             ],
         }
     )
+    return blocks
+
+
+def _encode_pick_value(email: str, as_of: str | None) -> str:
+    """Pack the seat-resolution context into the action button's
+    ``value`` field. Slack caps ``value`` at 2000 chars; an email +
+    a date is well under that even with JSON overhead. The action
+    handler decodes via :func:`decode_pick_value`; both functions
+    are deterministic and stdlib-only so tests don't need fixtures."""
+    payload: dict[str, str] = {"email": email}
+    if as_of:
+        payload["as_of"] = as_of
+    return json.dumps(payload, separators=(",", ":"))
+
+
+def decode_pick_value(raw: str) -> tuple[str, str | None]:
+    """Reverse :func:`_encode_pick_value`. Tolerant of the legacy
+    plain-email shape so a button minted before this change still
+    routes; never raises — a malformed payload returns ``("", None)``
+    and the caller renders an error."""
+    raw = (raw or "").strip()
+    if not raw:
+        return "", None
+    if raw.startswith("{"):
+        try:
+            payload = json.loads(raw)
+        except (ValueError, TypeError):
+            return "", None
+        if not isinstance(payload, dict):
+            return "", None
+        return (payload.get("email") or "").strip(), (payload.get("as_of") or None)
+    # Legacy shape: a bare email.
+    return raw, None
+
+
+def disambiguation_fuzzy(
+    token: str,
+    candidates: list[FuzzyCandidate],
+    *,
+    overflow: int = 0,
+    as_of: str | None = None,
+) -> list[dict[str, Any]]:
+    """#39: render a fuzzy-match candidate list with a "This person"
+    button per row. The button's ``value`` carries a JSON payload
+    ``{"email": ..., "as_of": ...}`` so the action handler can re-run
+    the lookup with the same as-of date the picker was generated
+    for. Same mrkdwn-escape contract as sibling builders.
+
+    ``overflow`` is the number of additional candidates beyond what's
+    rendered — surfaced in a context block so the caller knows to
+    refine. Slack caps a message at 50 blocks; with the issue's
+    default ``OFFICE_FUZZY_LIMIT=5`` we land far under that, but the
+    cap propagates through this builder unchanged so a higher limit
+    + overflow stays safe."""
+    safe_token = _escape_mrkdwn(token)
+    blocks: list[dict[str, Any]] = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"Did you mean one of these for `{safe_token}`?",
+            },
+        }
+    ]
+    for c in candidates:
+        rendered_label = _escape_mrkdwn(c.label or c.email)
+        rendered_email = _escape_mrkdwn(c.email)
+        blocks.append(
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*{rendered_label}* — `{rendered_email}`",
+                },
+                "accessory": {
+                    "type": "button",
+                    "action_id": DISAMBIG_FUZZY_ACTION_ID,
+                    "text": {"type": "plain_text", "text": "This person"},
+                    # JSON payload carries email + as_of so the click
+                    # honors the same date window the picker was
+                    # generated for (#42 review fix).
+                    "value": _encode_pick_value(c.email, as_of),
+                },
+            }
+        )
+    if overflow > 0:
+        blocks.append(
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": (
+                            f"_…and {overflow} more — refine your search "
+                            f"(full email or `@mention`)._"
+                        ),
+                    }
+                ],
+            }
+        )
     return blocks
 
 

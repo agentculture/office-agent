@@ -102,6 +102,17 @@ class SlackUserDirectory:
     def enabled(self) -> bool:
         return self._enabled
 
+    def iter_users(self) -> list[SlackUser]:
+        """Read-only snapshot of the cached roster, refreshed first
+        if stale. Used by the #39 fuzzy resolver to seed the
+        candidate pool from the Slack workspace; returns ``[]`` when
+        the directory is disabled (so callers can union without an
+        ``if enabled`` branch each time)."""
+        if not self._enabled:
+            return []
+        self._refresh_if_stale()
+        return list(self._users)
+
     def find_by_name(self, token: str) -> list[SlackUser]:
         """Return every Slack user whose display/real/name field
         equals ``token`` case-insensitively.

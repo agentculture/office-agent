@@ -9,14 +9,21 @@ real Bolt app, so this module never needs the SDK at import time.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
-from office_cli._dates import parse_iso_date, today_iso_date
-from office_cli._roles import RolesConfig, resolve_roles, role_for_email
+from office_cli._dates import is_effective, parse_iso_date, today_iso_date
+from office_cli._roles import RolesConfig, is_full_access, resolve_roles, role_for_email
 from office_cli.cli._errors import EXIT_ENV_ERROR, OfficeError
 from office_cli.seats import SeatService
 from office_cli.slack import _blocks
 from office_cli.slack._directory import SlackUserDirectory
+from office_cli.slack._fuzzy import (
+    DEFAULT_AUTO_PICK_GAP,
+    DEFAULT_CUTOFF,
+    DEFAULT_LIMIT,
+    auto_pick,
+    rank_candidates,
+)
 from office_cli.slack._resolve import ParsedTarget, parse_target
 
 _AUTO = object()
@@ -29,6 +36,9 @@ def build_app(
     roles: Any = None,
     data_dir: Path | None = None,
     slack_directory: SlackUserDirectory | None = None,
+    fuzzy_cutoff: float = DEFAULT_CUTOFF,
+    fuzzy_limit: int = DEFAULT_LIMIT,
+    fuzzy_gap: float = DEFAULT_AUTO_PICK_GAP,
     command_name: str = "/whereis",
 ) -> Any:
     """Register the configured slash-command listener and return the app.
@@ -59,6 +69,15 @@ def build_app(
     pass an instance to enable name → email resolution against the
     Slack workspace roster. The slack-serve entry point constructs one
     by default and respects ``OFFICE_SLACK_DIRECTORY=disabled``.
+
+    ``fuzzy_cutoff`` / ``fuzzy_limit`` / ``fuzzy_gap`` (#39) tune the
+    final tier of the resolution chain: difflib-backed fuzzy matching
+    against the union of assignment-store local-parts and Slack
+    roster names, with auto-pick when the top candidate clears the
+    runner-up by ``fuzzy_gap`` and an interactive disambiguation list
+    otherwise. Defaults match :mod:`office_cli.slack._fuzzy`; the
+    slack-serve entry point exposes ``OFFICE_FUZZY_CUTOFF`` and
+    ``OFFICE_FUZZY_LIMIT`` env overrides.
     """
     command_name = command_name.strip()
     if not command_name or not command_name.startswith("/"):
@@ -80,7 +99,16 @@ def build_app(
         text = command.get("text", "")
         target = parse_target(text)
         blocks, label = _resolve_and_lookup(
-            service, client, body, command, target, roles, slack_directory
+            service,
+            client,
+            body,
+            command,
+            target,
+            roles,
+            slack_directory,
+            fuzzy_cutoff=fuzzy_cutoff,
+            fuzzy_limit=fuzzy_limit,
+            fuzzy_gap=fuzzy_gap,
         )
         # ``command`` is the slash-command payload and is the canonical
         # source for ``channel_id``/``user_id``; ``body`` is the Bolt-
@@ -93,6 +121,45 @@ def build_app(
             text=label,  # fallback for clients that ignore blocks
         )
 
+    # #39: handle the "This person" button on a fuzzy disambiguation
+    # message. The button's ``value`` carries a JSON payload
+    # ``{"email": ..., "as_of": ...}`` so we can re-run the seat
+    # lookup against the *same* as-of window the picker was
+    # generated for (#42 review fix). ``respond`` is Bolt's
+    # ``response_url`` shortcut; tests pass a recorder.
+    @app.action(_blocks.DISAMBIG_FUZZY_ACTION_ID)
+    def _handle_pick(
+        ack: Callable[[], None],
+        body: dict,
+        respond: Callable[[dict], None],
+        client: Any,
+    ) -> None:
+        ack()
+        actions = body.get("actions") or []
+        raw_value = actions[0].get("value", "") if actions else ""
+        email, encoded_as_of = _blocks.decode_pick_value(raw_value)
+        if not email:
+            respond(
+                {
+                    "replace_original": True,
+                    "text": "couldn't read the picked candidate",
+                }
+            )
+            return
+        # Same role gate the slash command applies — pick + lookup
+        # must use the *caller's* role, not the original ephemeral's.
+        # ``body`` for action callbacks carries ``user.id``; mirror the
+        # slash-command shape (``user_id``) so ``_resolve_caller_role``
+        # can read it the same way.
+        synthetic_command = {"user_id": (body.get("user") or {}).get("id", "")}
+        role = _resolve_caller_role(client, body, synthetic_command, roles)
+        # Honor the encoded ``as_of`` if present; otherwise default to
+        # today (no_arg slash command path) so the click never resolves
+        # against an empty / past-window state by accident.
+        as_of = encoded_as_of or today_iso_date(service._clock)
+        blocks, label = _lookup(service, email, label=email, as_of=as_of, role=role)
+        respond({"replace_original": True, "blocks": blocks, "text": label})
+
     return app
 
 
@@ -104,6 +171,10 @@ def _resolve_and_lookup(
     target: ParsedTarget,
     roles: RolesConfig | None,
     slack_directory: SlackUserDirectory | None = None,
+    *,
+    fuzzy_cutoff: float = DEFAULT_CUTOFF,
+    fuzzy_limit: int = DEFAULT_LIMIT,
+    fuzzy_gap: float = DEFAULT_AUTO_PICK_GAP,
 ) -> tuple[list[dict[str, Any]], str]:
     """Resolve a :class:`ParsedTarget` to an email + label and run lookup."""
     if not target.ok:
@@ -134,6 +205,9 @@ def _resolve_and_lookup(
             as_of=as_of,
             role=role,
             slack_directory=slack_directory,
+            fuzzy_cutoff=fuzzy_cutoff,
+            fuzzy_limit=fuzzy_limit,
+            fuzzy_gap=fuzzy_gap,
         )
 
     user_id = target.user_id or command.get("user_id") or body.get("user_id", "")
@@ -198,6 +272,9 @@ def _lookup_by_local_part(
     as_of: str | None = None,
     role: str | None = None,
     slack_directory: SlackUserDirectory | None = None,
+    fuzzy_cutoff: float = DEFAULT_CUTOFF,
+    fuzzy_limit: int = DEFAULT_LIMIT,
+    fuzzy_gap: float = DEFAULT_AUTO_PICK_GAP,
 ) -> tuple[list[dict[str, Any]], str]:
     """#29 MVP + #38: ``/whereis ori.nachum`` resolves via the
     assignment store's email local-parts; if no local-part hits and a
@@ -213,7 +290,16 @@ def _lookup_by_local_part(
     matches = service.find_by_local_part(token, as_of=as_of, role=role)
     if not matches:
         # #38: try the Slack workspace roster for a name match.
-        return _lookup_by_slack_directory(service, token, slack_directory, as_of=as_of, role=role)
+        return _lookup_by_slack_directory(
+            service,
+            token,
+            slack_directory,
+            as_of=as_of,
+            role=role,
+            fuzzy_cutoff=fuzzy_cutoff,
+            fuzzy_limit=fuzzy_limit,
+            fuzzy_gap=fuzzy_gap,
+        )
     if len(matches) == 1:
         a = matches[0]
         # Use the resolved (store-derived) email as the label so even
@@ -235,17 +321,15 @@ def _lookup_by_slack_directory(
     *,
     as_of: str | None,
     role: str | None,
+    fuzzy_cutoff: float = DEFAULT_CUTOFF,
+    fuzzy_limit: int = DEFAULT_LIMIT,
+    fuzzy_gap: float = DEFAULT_AUTO_PICK_GAP,
 ) -> tuple[list[dict[str, Any]], str]:
     """#38: name-match against the Slack workspace roster, with the
-    directory's TTL cache. Disabled / unavailable directory returns
-    the local-part path's no-match block — the caller perceives a
-    single resolution chain ending in the same error.
+    directory's TTL cache. Falls through to the #39 fuzzy resolver
+    when no exact name matches.
     """
-    if slack_directory is None or not slack_directory.enabled:
-        return _blocks.no_match_for_token(token), "no seat found for that name"
-    candidates = slack_directory.find_by_name(token)
-    if not candidates:
-        return _blocks.no_match_for_token(token), "no seat found for that name"
+    candidates = slack_directory.find_by_name(token) if slack_directory else []
     if len(candidates) == 1:
         return _lookup(
             service,
@@ -254,10 +338,157 @@ def _lookup_by_slack_directory(
             as_of=as_of,
             role=role,
         )
-    return (
-        _blocks.disambiguation_users(token, candidates),
-        f"{len(candidates)} matches",
+    if len(candidates) > 1:
+        return (
+            _blocks.disambiguation_users(token, candidates),
+            f"{len(candidates)} matches",
+        )
+    # Empty roster match → final tier: fuzzy across local-parts ∪ roster.
+    return _lookup_by_fuzzy(
+        service,
+        token,
+        slack_directory,
+        as_of=as_of,
+        role=role,
+        cutoff=fuzzy_cutoff,
+        limit=fuzzy_limit,
+        gap=fuzzy_gap,
     )
+
+
+def _lookup_by_fuzzy(
+    service: SeatService,
+    token: str,
+    slack_directory: SlackUserDirectory | None,
+    *,
+    as_of: str | None,
+    role: str | None,
+    cutoff: float,
+    limit: int,
+    gap: float,
+) -> tuple[list[dict[str, Any]], str]:
+    """#39: third tier of the resolution chain — fuzzy match against
+    the union of assignment-store local-parts and Slack roster names.
+
+    Auto-picks when one candidate clearly wins (top score exceeds the
+    runner-up by ``gap``); otherwise renders the interactive
+    ``disambiguation_fuzzy`` picker. The picker's button click is
+    handled by the ``whereis_pick`` action handler registered in
+    :func:`build_app`, which re-runs the seat lookup against the
+    chosen email.
+    """
+    pool = list(_build_fuzzy_pool(service, slack_directory, as_of=as_of, role=role))
+    # Rank the FULL pool (no ``limit + 1`` cap) so:
+    #   * ``auto_pick`` sees the true runner-up — capping at
+    #     ``limit + 1`` would let ``fuzzy_limit=1`` auto-pick even
+    #     when many other candidates are within the gap.
+    #   * the overflow count reflects every above-cutoff hit, not
+    #     just one beyond the render slice.
+    # The cutoff already filters useless candidates, so a ranked
+    # list at v1 scale stays small.
+    ranked = rank_candidates(token, pool, cutoff=cutoff, limit=len(pool) or 1)
+    if not ranked:
+        return _blocks.no_match_for_token(token), "no seat found for that name"
+    picked = auto_pick(ranked, gap=gap)
+    if picked is not None:
+        return _lookup(
+            service,
+            email=picked.email,
+            label=picked.email,
+            as_of=as_of,
+            role=role,
+        )
+    rendered = ranked[:limit]
+    overflow = max(0, len(ranked) - limit)
+    return (
+        _blocks.disambiguation_fuzzy(token, rendered, overflow=overflow, as_of=as_of),
+        f"{len(rendered)} matches",
+    )
+
+
+def _build_fuzzy_pool(
+    service: SeatService,
+    slack_directory: SlackUserDirectory | None,
+    *,
+    as_of: str | None,
+    role: str | None,
+) -> Iterable[tuple[str, str]]:
+    """Yield ``(label, email)`` candidates for the fuzzy ranker, with
+    the same eligibility rules ``SeatService.find_by_local_part`` /
+    ``whereis`` apply.
+
+    For each assignment in the store:
+
+    * non-empty email; otherwise skip (no useful resolution target).
+    * for non-full-access (viewer) roles: skip ``hidden=True`` rows
+      entirely. The privacy contract behind ``hidden_private`` is
+      "viewers don't learn where this person sits"; surfacing the
+      email in the disambiguation list — even with the seat
+      redacted post-pick — defeats the gate. Track these emails in
+      ``excluded`` so the Slack-roster contribution can drop them
+      too (a hidden-seat occupant who shows up under their Slack
+      display name would otherwise route around the local-part skip).
+    * directory ``is_active`` filter: an offboarded employee's row
+      shouldn't surface as a fuzzy hit.
+    * ``as_of`` window: same gate ``whereis`` enforces.
+
+    For the Slack roster contribution: include every cached user
+    whose email isn't in ``excluded``. We don't apply
+    ``directory.is_active`` here because it's a different identity
+    space (Slack workspace, not BambooHR), and ``_lookup`` post-pick
+    will still apply the gate via ``service.whereis``.
+
+    Order matters for ``rank_candidates``'s "first occurrence wins on
+    tie" rule: emit local-parts first (the strong source — these
+    are people we can definitely seat) then the Slack roster.
+    """
+    excluded: set[str] = set()
+    yield from _yield_eligible_local_parts(
+        service, as_of=as_of, full_access=is_full_access(role), excluded=excluded
+    )
+    yield from _yield_eligible_roster(slack_directory, excluded=excluded)
+
+
+def _yield_eligible_local_parts(
+    service: SeatService,
+    *,
+    as_of: str | None,
+    full_access: bool,
+    excluded: set[str],
+) -> Iterable[tuple[str, str]]:
+    """Local-part contribution to the fuzzy pool. Mutates ``excluded``
+    so the roster contribution can drop the same hidden-seat
+    occupants if their display name matches."""
+    for a in service.store.list():
+        email = (a.employee_email or "").strip()
+        if not email or "@" not in email:
+            continue
+        if not full_access and a.hidden:
+            excluded.add(email.lower())
+            continue
+        if not service.directory.is_active(email):
+            continue
+        if as_of is not None and not is_effective(a, as_of):
+            continue
+        yield (email.split("@", 1)[0], email)
+
+
+def _yield_eligible_roster(
+    slack_directory: SlackUserDirectory | None,
+    *,
+    excluded: set[str],
+) -> Iterable[tuple[str, str]]:
+    """Slack-roster contribution. Drops users whose email is in
+    ``excluded`` (the hidden-seat-for-viewer gate from the local-part
+    pass)."""
+    if slack_directory is None or not slack_directory.enabled:
+        return
+    for u in slack_directory.iter_users():
+        if not u.email or u.email.lower() in excluded:
+            continue
+        label = u.display_name or u.real_name or u.name or ""
+        if label:
+            yield (label, u.email)
 
 
 def _lookup(
