@@ -32,14 +32,22 @@ def _deep_link_button(seat_id: str, floor: str) -> dict[str, Any] | None:
     }
 
 
-def occupied(assignment: Assignment, *, target_label: str) -> list[dict[str, Any]]:
+def occupied(
+    assignment: Assignment, *, target_label: str, verb: str = "sits"
+) -> list[dict[str, Any]]:
+    """Render the seat-found block. ``verb`` is ``"sits"`` for third-person
+    subjects (email or ``<@Uxxx>`` mention) and ``"sit"`` for second-person
+    self-lookup where the handler substitutes the literal ``"you"`` for
+    ``target_label``. The handler picks the verb form; the renderer just
+    interpolates."""
     blocks: list[dict[str, Any]] = [
         {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
                 "text": (
-                    f"*{target_label}* sits at *{assignment.seat_id}* on `{assignment.floor}`."
+                    f"*{target_label}* {verb} at *{assignment.seat_id}* "
+                    f"on `{assignment.floor}`."
                 ),
             },
         }

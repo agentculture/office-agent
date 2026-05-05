@@ -640,7 +640,7 @@ wheels = [
 
 [[package]]
 name = "office-cli"
-version = "0.9.3"
+version = "0.9.4"
 source = { editable = "." }
 dependencies = [
     { name = "pyyaml" },

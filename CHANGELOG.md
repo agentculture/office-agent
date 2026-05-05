@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.4] - 2026-05-05
+
+### Fixed
+
+- Slack `/whereis` (or any `OFFICE_SLACK_COMMAND` override) invoked with
+  no arguments now renders *"you sit at &lt;seat&gt;"* — second-person
+  agreement — instead of the previous *"you sits at &lt;seat&gt;"*. The
+  third-person paths (`alice@example.com sits…`, `<@U123> sits…`)
+  are unchanged. `office_cli.slack._blocks.occupied()` gained a
+  `verb: str = "sits"` kwarg; the handler picks `"sit"` when
+  `target.self_lookup` is true.
+  ([#27](https://github.com/agentculture/office-agent/issues/27))
+
 ## [0.9.3] - 2026-05-05
 
 ### Fixed
