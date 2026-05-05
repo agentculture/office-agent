@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.3] - 2026-05-05
+
+### Fixed
+
+- `office seats migrate` now writes one row per SVG seat — vacant rows
+  for never-assigned seats — so the target backend mirrors the full
+  seat universe declared in `data/offices.yaml` + `floors/*.svg`. The
+  previous behavior wrote only "touched" rows, leaving the Google Sheet
+  sparse (3 of 9 seats in the smoke-test fixture) and undercutting the
+  Sheets-as-CMS architectural promise in `CLAUDE.md`. Rows in the source
+  store that don't correspond to any SVG seat (orphans) survive the
+  migration but are now surfaced separately on stderr and in the JSON
+  summary's `assignments_orphans` field.
+  ([#33](https://github.com/agentculture/office-agent/issues/33))
+
 ## [0.9.2] - 2026-05-05
 
 ### Added

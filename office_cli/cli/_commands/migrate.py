@@ -18,13 +18,30 @@ Idempotency:
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from office_cli._config import add_data_dir_arg, resolve_data_dir
 from office_cli.cli._errors import EXIT_USER_ERROR, OfficeError
 from office_cli.cli._output import emit_diagnostic, emit_result
-from office_cli.seats import build_backends_for_type
+from office_cli.floors import parse_svg
+from office_cli.offices import load_offices
+from office_cli.seats import Assignment, build_backends_for_type
 
 _VALID_TYPES = ("csv", "sheets", "dynamo")
+
+
+def _load_all_svg_seats(data_dir: Path) -> list[tuple[str, str]]:
+    """Return ``[(seat_id, floor_id), ...]`` across every floor declared in
+    ``data/offices.yaml``. Mirrors the iteration in
+    :func:`office_cli.seats.build_service` so migrate can pad its output
+    with vacant rows for SVG seats the source store doesn't know about."""
+    out: list[tuple[str, str]] = []
+    for office in load_offices(data_dir).values():
+        for floor_id, floor in office.floors.items():
+            if floor.svg.is_file():
+                for seat_id in parse_svg(floor.svg).seat_ids:
+                    out.append((seat_id, floor_id))
+    return out
 
 
 def cmd_migrate(args: argparse.Namespace) -> int:
@@ -44,12 +61,26 @@ def cmd_migrate(args: argparse.Namespace) -> int:
     src_assignments = src_store.list()
     src_audit_entries = src_audit.all()
 
-    tgt_existing = {a.seat_id: a for a in tgt_store.list()}
-    new = [a for a in src_assignments if a.seat_id not in tgt_existing]
-    overwritten = [
-        a for a in src_assignments if a.seat_id in tgt_existing and tgt_existing[a.seat_id] != a
+    # Pad the source list with vacant rows for every SVG seat the source
+    # store doesn't already know about. This makes the target backend a
+    # complete view of the seat universe — important for Sheets-as-CMS,
+    # where HR/facilities need to see vacant seats to assign people. Rows
+    # in the source that aren't in any SVG (orphans — someone removed a
+    # seat from the SVG without cleaning the store) survive the migration
+    # but get reported separately so an operator can act.
+    svg_seats = _load_all_svg_seats(data_dir)
+    svg_seat_ids = {sid for sid, _ in svg_seats}
+    src_seat_ids = {a.seat_id for a in src_assignments}
+    padding = [
+        Assignment(seat_id=sid, floor=fid) for sid, fid in svg_seats if sid not in src_seat_ids
     ]
-    unchanged = len(src_assignments) - len(new) - len(overwritten)
+    orphans = [a for a in src_assignments if a.seat_id not in svg_seat_ids]
+    padded = list(src_assignments) + padding
+
+    tgt_existing = {a.seat_id: a for a in tgt_store.list()}
+    new = [a for a in padded if a.seat_id not in tgt_existing]
+    overwritten = [a for a in padded if a.seat_id in tgt_existing and tgt_existing[a.seat_id] != a]
+    unchanged = len(padded) - len(new) - len(overwritten)
 
     audit_target_size = len(tgt_audit.all())
     if (
@@ -70,11 +101,18 @@ def cmd_migrate(args: argparse.Namespace) -> int:
             ),
         )
 
+    if orphans:
+        emit_diagnostic(
+            f"orphans: {len(orphans)} row(s) in source not present in any SVG: "
+            f"{', '.join(sorted(o.seat_id for o in orphans))}"
+        )
+
     if args.dry_run:
         emit_diagnostic(
             f"DRY RUN: {args.from_type} → {args.to_type}: "
             f"{len(new)} new, {len(overwritten)} overwritten, "
-            f"{unchanged} unchanged; {len(src_audit_entries)} audit rows"
+            f"{unchanged} unchanged; {len(orphans)} orphans; "
+            f"{len(src_audit_entries)} audit rows"
         )
         if args.json:
             emit_result(
@@ -85,27 +123,29 @@ def cmd_migrate(args: argparse.Namespace) -> int:
                     "assignments_new": len(new),
                     "assignments_overwritten": len(overwritten),
                     "assignments_unchanged": unchanged,
+                    "assignments_orphans": len(orphans),
                     "audit_rows": len(src_audit_entries),
                 },
                 json_mode=True,
             )
         return 0
 
-    tgt_store.upsert_many(src_assignments)
+    tgt_store.upsert_many(padded)
     tgt_audit.append_many(src_audit_entries)
 
     summary = {
         "from": args.from_type,
         "to": args.to_type,
         "dry_run": False,
-        "assignments_written": len(src_assignments),
+        "assignments_written": len(padded),
+        "assignments_orphans": len(orphans),
         "audit_rows_written": len(src_audit_entries),
     }
     if args.json:
         emit_result(summary, json_mode=True)
     else:
         emit_result(
-            f"migrated {len(src_assignments)} assignments and "
+            f"migrated {len(padded)} assignments and "
             f"{len(src_audit_entries)} audit rows from "
             f"{args.from_type} to {args.to_type}",
             json_mode=False,
