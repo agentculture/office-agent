@@ -478,3 +478,26 @@ def test_command_name_without_leading_slash_raises(data_dir: Path) -> None:
     with pytest.raises(OfficeError) as excinfo:
         build_app(service, app=FakeSlackApp(), command_name="ai")
     assert "must start with '/'" in str(excinfo.value)
+
+
+def test_command_name_with_surrounding_whitespace_is_normalized(data_dir: Path) -> None:
+    """Programmatic callers that pass an untrimmed ``command_name`` (e.g. an
+    env-var read elsewhere) shouldn't end up registering a handler under
+    ``"  /ai  "``. ``build_app`` normalizes at the boundary so every caller
+    behaves consistently."""
+    service = _service_with_active(data_dir, "alice@example.com")
+    fake_app = FakeSlackApp()
+    build_app(service, app=fake_app, command_name="  /ai  ")
+
+    assert "/ai" in fake_app.handlers
+    assert "  /ai  " not in fake_app.handlers
+
+
+def test_command_name_empty_after_strip_raises(data_dir: Path) -> None:
+    """Whitespace-only ``command_name`` collapses to empty after strip and
+    must fail loudly rather than registering a handler under ``""``."""
+    service = _service_with_active(data_dir, "alice@example.com")
+    from office_cli.cli._errors import OfficeError
+
+    with pytest.raises(OfficeError):
+        build_app(service, app=FakeSlackApp(), command_name="   ")

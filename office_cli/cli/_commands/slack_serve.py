@@ -56,7 +56,20 @@ def cmd_slack_serve(args: argparse.Namespace) -> int:
         ) from err
     from office_cli.slack import build_app, run_socket_mode
 
-    command_name = (os.environ.get("OFFICE_SLACK_COMMAND") or "/whereis").strip()
+    raw_command = os.environ.get("OFFICE_SLACK_COMMAND")
+    if raw_command is None:
+        command_name = "/whereis"
+    else:
+        command_name = raw_command.strip()
+        if not command_name:
+            raise OfficeError(
+                code=EXIT_ENV_ERROR,
+                message="OFFICE_SLACK_COMMAND is empty",
+                remediation=(
+                    "unset OFFICE_SLACK_COMMAND to keep the default /whereis, "
+                    "or set it to a /-prefixed slash-command name (e.g. /ai)."
+                ),
+            )
 
     app = App(token=bot_token)
     # Pass ``data_dir`` so build_app auto-resolves the roles map from

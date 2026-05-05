@@ -29,7 +29,10 @@ def build_app(
     data_dir: Path | None = None,
     command_name: str = "/whereis",
 ) -> Any:
-    """Register the ``/whereis`` listener and return the configured app.
+    """Register the configured slash-command listener and return the app.
+
+    The listener binds to ``command_name`` (default ``/whereis``); see
+    the parameter notes below for how operators rebind it.
 
     If ``app`` is ``None`` we construct a default ``slack_bolt.App``
     (which reads ``SLACK_BOT_TOKEN`` from the env). Tests pass a fake
@@ -45,9 +48,11 @@ def build_app(
     binds to. The default ``/whereis`` matches the project identity;
     operators whose workspace already owns ``/whereis`` (e.g. another
     app) can rebind by setting ``OFFICE_SLACK_COMMAND`` on the
-    ``slack-serve`` entry point. Must start with ``/``.
+    ``slack-serve`` entry point. Surrounding whitespace is stripped;
+    the resulting value must be non-empty and start with ``/``.
     """
-    if not command_name.startswith("/"):
+    command_name = command_name.strip()
+    if not command_name or not command_name.startswith("/"):
         raise OfficeError(
             code=EXIT_ENV_ERROR,
             message=f"command_name must start with '/': got {command_name!r}",
