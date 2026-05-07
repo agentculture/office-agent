@@ -42,6 +42,7 @@ from office_cli.drive._client import DriveClient, DriveEntry, GoogleDriveClient
 _OFFICES_YAML = "offices.yaml"
 _YAML_REL = "data/offices.yaml"
 _OFFICE_ID_RE = re.compile(r"\(([a-z0-9-]+)\)\s*$")
+_SHAPE_HINT = "see data/offices.yaml.example for the expected shape"
 
 
 def hydrate_data_dir(
@@ -110,22 +111,26 @@ def _is_warm_cache_complete(cache_dir: Path, meta: CacheMeta, ttl: int) -> bool:
     offices_raw = data.get("offices")
     if not isinstance(offices_raw, list):
         return False
-    for office in offices_raw:
-        if not isinstance(office, dict):
-            return False
-        floors_raw = office.get("floors") or []
-        if not isinstance(floors_raw, list):
-            return False
-        for floor in floors_raw:
-            if not isinstance(floor, dict):
-                return False
-            svg_rel = str(floor.get("svg", "")).strip()
-            if not svg_rel:
-                return False
-            local = cache_dir / svg_rel
-            if not (local.is_file() and meta.is_fresh(svg_rel, ttl)):
-                return False
-    return True
+    return all(_office_is_warm(o, cache_dir, meta, ttl) for o in offices_raw)
+
+
+def _office_is_warm(office: object, cache_dir: Path, meta: CacheMeta, ttl: int) -> bool:
+    if not isinstance(office, dict):
+        return False
+    floors_raw = office.get("floors") or []
+    if not isinstance(floors_raw, list):
+        return False
+    return all(_floor_is_warm(f, cache_dir, meta, ttl) for f in floors_raw)
+
+
+def _floor_is_warm(floor: object, cache_dir: Path, meta: CacheMeta, ttl: int) -> bool:
+    if not isinstance(floor, dict):
+        return False
+    svg_rel = str(floor.get("svg", "")).strip()
+    if not svg_rel:
+        return False
+    local = cache_dir / svg_rel
+    return local.is_file() and meta.is_fresh(svg_rel, ttl)
 
 
 # -- Drive hydration ----------------------------------------------------------
@@ -170,7 +175,7 @@ def _hydrate_office(
         raise OfficeError(
             code=EXIT_USER_ERROR,
             message=f"office entry at index {idx} is not a mapping",
-            remediation="see data/offices.yaml.example for the expected shape",
+            remediation=_SHAPE_HINT,
         )
     oid = str(office.get("id", "")).strip()
     if not oid:
@@ -208,7 +213,7 @@ def _hydrate_floor(
         raise OfficeError(
             code=EXIT_USER_ERROR,
             message=(f"office {office_id!r}: floor entry at index {idx} is not a mapping"),
-            remediation="see data/offices.yaml.example for the expected shape",
+            remediation=_SHAPE_HINT,
         )
     fid = str(floor.get("id", "")).strip()
     if not fid:
@@ -267,7 +272,7 @@ def _resolve_unique_file(
         raise OfficeError(
             code=EXIT_USER_ERROR,
             message=(
-                f"floor {floor_id!r}: SVG {name!r} not found in office folder " f"{folder_name!r}"
+                f"floor {floor_id!r}: SVG {name!r} not found in office folder {folder_name!r}"
             ),
             remediation=(
                 "upload the SVG to that folder, or fix the `svg:` field in "
@@ -356,7 +361,7 @@ def _load_yaml(path: Path) -> dict:
         raise OfficeError(
             code=EXIT_USER_ERROR,
             message="offices.yaml in Drive must be a mapping at the top level",
-            remediation="see data/offices.yaml.example for the expected shape",
+            remediation=_SHAPE_HINT,
         )
     return raw
 
@@ -367,6 +372,6 @@ def _validate_offices_list(yaml_data: dict) -> list:
         raise OfficeError(
             code=EXIT_USER_ERROR,
             message="offices.yaml in Drive must contain a top-level `offices:` list",
-            remediation="see data/offices.yaml.example for the expected shape",
+            remediation=_SHAPE_HINT,
         )
     return offices_raw
