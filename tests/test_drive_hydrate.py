@@ -122,38 +122,67 @@ def test_happy_path_hydrates_data_dir(tmp_path: Path) -> None:
     assert floor.svg == data_dir / "floors" / "tlv-floor-5.svg"
 
 
-def test_warm_cache_skips_downloads(tmp_path: Path) -> None:
+def test_warm_cache_skips_all_drive_calls(tmp_path: Path) -> None:
+    """Within TTL the hydrator must hit Drive zero times — no downloads
+    *and* no folder listings (acceptance criterion for issue #44)."""
     fake = _build_fake()
     cache_root = tmp_path / "cache"
-    kwargs = dict(
-        credentials_path=tmp_path / "unused.json",
-        cache_root=cache_root,
-        client=fake,
-        ttl_seconds=300,
-    )
+    kwargs = {
+        "credentials_path": tmp_path / "unused.json",
+        "cache_root": cache_root,
+        "client": fake,
+        "ttl_seconds": 300,
+    }
 
     hydrate_data_dir(_ROOT_ID, **kwargs)
     cold_downloads = fake.download_calls
+    cold_lists = fake.list_calls
     assert cold_downloads == 2  # offices.yaml + one SVG
+    assert cold_lists == 2  # root + one office folder
 
-    # Within TTL, a re-hydrate should not re-download anything.
     hydrate_data_dir(_ROOT_ID, **kwargs)
     assert fake.download_calls == cold_downloads
+    assert fake.list_calls == cold_lists  # warm path skipped Drive entirely
 
 
 def test_zero_ttl_forces_refetch(tmp_path: Path) -> None:
     fake = _build_fake()
     cache_root = tmp_path / "cache"
-    kwargs = dict(
-        credentials_path=tmp_path / "unused.json",
-        cache_root=cache_root,
-        client=fake,
-        ttl_seconds=0,
-    )
+    kwargs = {
+        "credentials_path": tmp_path / "unused.json",
+        "cache_root": cache_root,
+        "client": fake,
+        "ttl_seconds": 0,
+    }
 
     hydrate_data_dir(_ROOT_ID, **kwargs)
     hydrate_data_dir(_ROOT_ID, **kwargs)
     assert fake.download_calls == 4  # two fetches each run
+
+
+def test_warm_path_falls_through_when_svg_missing_from_cache(
+    tmp_path: Path,
+) -> None:
+    """If the meta says fresh but the local SVG was deleted, the warm
+    path should fall through and re-fetch via Drive instead of returning
+    a broken cache."""
+    fake = _build_fake()
+    cache_root = tmp_path / "cache"
+    kwargs = {
+        "credentials_path": tmp_path / "unused.json",
+        "cache_root": cache_root,
+        "client": fake,
+        "ttl_seconds": 300,
+    }
+
+    hydrate_data_dir(_ROOT_ID, **kwargs)
+    # Simulate someone clearing the cached SVG by hand.
+    (cache_root / _ROOT_ID / "floors" / "tlv-floor-5.svg").unlink()
+
+    hydrate_data_dir(_ROOT_ID, **kwargs)
+    assert (cache_root / _ROOT_ID / "floors" / "tlv-floor-5.svg").is_file()
+    # The warm path bailed, so a fresh download happened.
+    assert fake.download_calls == 3  # initial 2 + the refetched SVG
 
 
 def test_missing_offices_yaml_raises(tmp_path: Path) -> None:
@@ -275,3 +304,75 @@ def test_empty_root_id_raises(tmp_path: Path) -> None:
             client=fake,
         )
     assert exc.value.code == EXIT_ENV_ERROR
+
+
+def test_duplicate_svg_filename_raises(tmp_path: Path) -> None:
+    """Drive permits same-name siblings; the hydrator must not pick one
+    arbitrarily."""
+    fake = _build_fake()
+    fake.folders["tlv-folder"].append(
+        DriveEntry(id="svg-id-2", name="tlv-floor-5.svg", is_folder=False)
+    )
+    fake.files["svg-id-2"] = b"<svg/>"
+    with pytest.raises(OfficeError) as exc:
+        hydrate_data_dir(
+            _ROOT_ID,
+            credentials_path=tmp_path / "unused.json",
+            cache_root=tmp_path / "cache",
+            client=fake,
+        )
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "multiple files" in exc.value.message.lower()
+    assert "tlv-floor-5.svg" in exc.value.message
+
+
+def test_non_mapping_office_entry_raises(tmp_path: Path) -> None:
+    """Non-dict office entries must raise immediately — the hydrator must
+    not write a half-baked YAML to the cache that fails later in
+    load_offices()."""
+    bad_yaml = b"offices:\n  - just a string\n"
+    fake = _build_fake(yaml_bytes=bad_yaml)
+    with pytest.raises(OfficeError) as exc:
+        hydrate_data_dir(
+            _ROOT_ID,
+            credentials_path=tmp_path / "unused.json",
+            cache_root=tmp_path / "cache",
+            client=fake,
+        )
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "not a mapping" in exc.value.message
+
+
+def test_non_mapping_floor_entry_raises(tmp_path: Path) -> None:
+    bad_yaml = b"""\
+offices:
+  - id: tlv
+    name: Tel Aviv
+    floors:
+      - just a string
+"""
+    fake = _build_fake(yaml_bytes=bad_yaml)
+    with pytest.raises(OfficeError) as exc:
+        hydrate_data_dir(
+            _ROOT_ID,
+            credentials_path=tmp_path / "unused.json",
+            cache_root=tmp_path / "cache",
+            client=fake,
+        )
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "not a mapping" in exc.value.message
+    assert "tlv" in exc.value.message
+
+
+def test_office_missing_id_raises(tmp_path: Path) -> None:
+    bad_yaml = b"offices:\n  - name: nameless\n"
+    fake = _build_fake(yaml_bytes=bad_yaml)
+    with pytest.raises(OfficeError) as exc:
+        hydrate_data_dir(
+            _ROOT_ID,
+            credentials_path=tmp_path / "unused.json",
+            cache_root=tmp_path / "cache",
+            client=fake,
+        )
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "missing an `id`" in exc.value.message
