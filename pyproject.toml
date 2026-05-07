@@ -1,6 +1,6 @@
 [project]
 name = "office-cli"
-version = "0.9.9"
+version = "0.10.0"
 description = "Office — CLI to manage sittings and meeting rooms in office maps."
 readme = "README.md"
 license = "MIT"
@@ -31,6 +31,10 @@ sso = [
     "httpx>=0.27",
 ]
 dynamo = ["boto3>=1.34"]
+drive = [
+    "google-api-python-client>=2.100",
+    "google-auth>=2.30",
+]
 
 [project.urls]
 Homepage = "https://github.com/agentculture/office-agent"
@@ -68,6 +72,11 @@ dev = [
     # in-memory FakeDynamoClient; we still pull boto3 so the
     # production import path is sanity-checked at install time.
     "boto3>=1.34",
+    # Drive-as-CMS (issue #44). CI exercises the hydrator against a
+    # FakeDriveClient; google-api-python-client is pulled into dev so
+    # the GoogleDriveClient import path is sanity-checked at install.
+    "google-api-python-client>=2.100",
+    "google-auth>=2.30",
 ]
 
 [tool.coverage.run]
