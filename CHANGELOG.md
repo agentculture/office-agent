@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-05-07
+
+### Added
+
+- Drive-as-CMS backend: when `OFFICE_DRIVE_ROOT` is set, hydrate `offices.yaml` and floor SVGs from a Google Drive folder into a local cache instead of reading from the working directory. Drive layout is one folder per office (folder name ends with `(<office-id>)`); the hydrator translates Drive's bare-filename SVGs into the existing `floors/<filename>` shape so downstream code is unchanged. Optional `[drive]` extra brings `google-api-python-client`. Knobs: `OFFICE_DRIVE_CREDENTIALS` (defaults to the Sheets SA), `OFFICE_DRIVE_TTL_SECONDS` (default 300), `OFFICE_DRIVE_CACHE_DIR` (default `~/.cache/office-cli/drive`). See `docs/floors-from-drive.md`. ([#44](https://github.com/agentculture/office-agent/issues/44))
+- `data/offices.yaml.example` documents the local-fallback shape for operators migrating to Drive mode.
+
 ## [0.9.9] - 2026-05-05
 
 ### Added

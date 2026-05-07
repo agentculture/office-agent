@@ -6,7 +6,9 @@ Data-dir resolution order:
 
 1. ``--data-dir`` CLI flag (passed through ``args.data_dir``);
 2. ``OFFICE_DATA_DIR`` environment variable;
-3. the current working directory.
+3. ``OFFICE_DRIVE_ROOT`` env var → eager-hydrate from Google Drive
+   into ``~/.cache/office-cli/drive/<root-id>/`` and use that;
+4. the current working directory.
 
 Storage selection order (last wins):
 
@@ -69,6 +71,8 @@ def resolve_data_dir(args: argparse.Namespace | None = None) -> Path:
         candidate = Path(explicit).expanduser()
     elif os.environ.get("OFFICE_DATA_DIR"):
         candidate = Path(os.environ["OFFICE_DATA_DIR"]).expanduser()
+    elif os.environ.get("OFFICE_DRIVE_ROOT"):
+        candidate = _hydrate_drive_data_dir()
     else:
         candidate = Path.cwd()
     if not candidate.is_dir():
@@ -78,6 +82,64 @@ def resolve_data_dir(args: argparse.Namespace | None = None) -> Path:
             remediation="pass --data-dir or set OFFICE_DATA_DIR to the office-agent checkout",
         )
     return candidate
+
+
+def _hydrate_drive_data_dir() -> Path:
+    """Pull the Drive-hosted office tree into a local cache and return it.
+
+    Lazy-imports :mod:`office_cli.drive` so the ``[drive]`` extra stays
+    optional. Reads ``OFFICE_DRIVE_ROOT`` (required) plus optional
+    ``OFFICE_DRIVE_CREDENTIALS`` / ``OFFICE_DRIVE_TTL_SECONDS`` /
+    ``OFFICE_DRIVE_CACHE_DIR`` knobs.
+    """
+    from office_cli.drive import hydrate_data_dir
+
+    root_id = os.environ["OFFICE_DRIVE_ROOT"].strip()
+    creds = _drive_credentials_path()
+    ttl = _drive_ttl_seconds()
+    cache_root = _drive_cache_root()
+    return hydrate_data_dir(
+        root_id,
+        credentials_path=creds,
+        cache_root=cache_root,
+        ttl_seconds=ttl,
+    )
+
+
+def _drive_credentials_path() -> Path:
+    raw = os.environ.get("OFFICE_DRIVE_CREDENTIALS", "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    # Default to the Sheets SA so a single credential covers both backends.
+    return Path("data/sheets-service-account.json").resolve()
+
+
+def _drive_ttl_seconds() -> int:
+    raw = os.environ.get("OFFICE_DRIVE_TTL_SECONDS", "").strip()
+    if not raw:
+        return 300
+    try:
+        ttl = int(raw)
+    except ValueError as err:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"OFFICE_DRIVE_TTL_SECONDS must be an integer; got {raw!r}",
+            remediation="set OFFICE_DRIVE_TTL_SECONDS to a non-negative integer (seconds)",
+        ) from err
+    if ttl < 0:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"OFFICE_DRIVE_TTL_SECONDS must be non-negative; got {ttl}",
+            remediation="set OFFICE_DRIVE_TTL_SECONDS to a non-negative integer (seconds)",
+        )
+    return ttl
+
+
+def _drive_cache_root() -> Path:
+    raw = os.environ.get("OFFICE_DRIVE_CACHE_DIR", "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".cache" / "office-cli" / "drive"
 
 
 def add_data_dir_arg(parser: argparse.ArgumentParser) -> None:

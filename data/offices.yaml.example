@@ -1,0 +1,53 @@
+# Example offices.yaml — the office topology config.
+#
+# Two ways this file is read:
+#
+# 1. Local mode (default). With OFFICE_DRIVE_ROOT unset, `office` reads
+#    `data/offices.yaml` from the current working directory (or
+#    --data-dir / OFFICE_DATA_DIR). That file looks like this one.
+#
+# 2. Drive mode. With OFFICE_DRIVE_ROOT set, `office` reads
+#    `offices.yaml` from the Drive folder pointed at by that env var.
+#    The Drive copy uses **bare filenames** for `svg:` (e.g. just
+#    `tlv-floor-5.svg`) and the hydrator finds the file in the matching
+#    office folder. See docs/floors-from-drive.md.
+#
+# Both modes share the same schema apart from the `svg:` value. Drive
+# copy = bare filename. Local copy = `floors/<filename>`.
+
+offices:
+  - id: tlv
+    name: "Tel Aviv"
+    address: "Tel Aviv, Israel"
+    floors:
+      - id: tlv-floor-5
+        svg: floors/tlv-floor-5.svg          # local mode: relative path under data dir
+        status: active
+        clusters:
+          T: { capacity: 6, type: open-space }
+          Z: { capacity: 2, type: phone-room }
+        rooms:
+          "5.18": { name: "Meeting Room 8P", type: meeting, capacity: 8 }
+
+# Optional: who can see hidden seats / edit assignments.
+# Anything not listed here is `viewer` (sees `hidden=TRUE` seats as
+# "occupied (private)"). Issue #45 will move membership to Google
+# Groups / Active Directory; until then, list emails directly.
+#
+# roles:
+#   editor:
+#     - "hr-it@tipalti.com"
+#   planning:
+#     - "facilities@tipalti.com"
+
+# Optional: assignment storage backend. CSV is the default; sheets and
+# dynamo are alternatives. Note: this block is *infrastructure*, not
+# CMS content — keep it env-driven (set OFFICE_STORE / OFFICE_SHEETS_*
+# / OFFICE_DYNAMO_* directly) rather than putting it in Drive.
+#
+# storage:
+#   type: sheets
+#   sheets:
+#     spreadsheet_id: "..."
+#     service_account: data/sheets-service-account.json
+#     cache_ttl_seconds: 300
