@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] - 2026-05-07
+
+### Added
+
+- `docs/tracing-guide.md` walkthrough for producing floor SVGs in Inkscape: document setup, the id/class contract, scaling Inkscape workflow, save-as-Plain-SVG, validation loop, common gotchas, end-to-end checklist. Cross-linked from `docs/floors-from-drive.md`. ([#15](https://github.com/agentculture/office-agent/issues/15))
+
 ## [0.10.0] - 2026-05-07
 
 ### Added

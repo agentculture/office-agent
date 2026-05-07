@@ -175,6 +175,7 @@ run within TTL makes zero Drive calls.
 
 ## See also
 
+- [`docs/tracing-guide.md`](./tracing-guide.md) — how to produce the SVG you'll drop into the Drive folder.
 - [`data/offices.yaml.example`](../data/offices.yaml.example) — local-fallback shape, used when `OFFICE_DRIVE_ROOT` is unset.
 - [`docs/architecture.md`](./architecture.md) — full v1 design.
 - [`docs/setup.md`](./setup.md) — getting started without Drive.
