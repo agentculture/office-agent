@@ -4,12 +4,15 @@ Issue [#15](https://github.com/agentculture/office-agent/issues/15).
 This is the human side of the v1 floor-plan system: how to turn an
 architect's PDF into an SVG the agent can read.
 
-The integration boundary is small — the parser only looks at `<rect>`
-and `<polygon>` elements with `id` and `class` attributes. Everything
-else (background images, layer groups, styling) is ignored. So the
-question this guide answers is: **how do you produce those few
-attributes in Inkscape, with the right values, and confirm they
-survive the save?**
+The integration boundary is small — the parser walks every `<rect>`
+and `<polygon>` with an `id` attribute, then uses the `class`
+attribute to tag it as a seat or a room. Shapes without `id` are
+ignored entirely; shapes with an `id` but without `class="seat"` or
+`class="room"` show up in the validator's "untagged" bucket so you
+can fix them. Everything else (background images, layer groups,
+styling) is ignored. So the question this guide answers is: **how do
+you produce those few attributes in Inkscape, with the right values,
+and confirm they survive the save?**
 
 ## Document setup
 
@@ -32,7 +35,7 @@ Every shape the agent cares about has both an `id` and a `class`.
 | ----------------------------------------- | ----------- | ------- | -------------------------- | --------------- |
 | Open-space desk                           | `<rect>`    | `seat`  | `<floor>-<CLUSTER>-<NN>`   | `5-T-01`        |
 | Phone / zoom room used as a desk          | `<rect>`    | `seat`  | same as above              | `5-Z-04`        |
-| Named room from the architect's legend    | `<polygon>` | `room`  | architect id verbatim      | `5.18`          |
+| Named room from the architect's legend    | `<polygon>` | `room`  | `<floor>.<NN>`             | `5.18`          |
 | Cluster boundary (optional, decorative)   | `<polygon>` | —       | `cluster-<floor>-<letter>` | `cluster-5-T`   |
 
 Hard rules:
@@ -40,6 +43,10 @@ Hard rules:
 - Cluster letter **uppercase**. Sequence **zero-padded to 2 digits**.
   `5-T-01`, never `5-T-1`.
 - Floor number first; the agent splits on the last `-` to recover it.
+- Room ids match the validator's regex `^\d+\.\d+$` — strictly
+  `<digits>.<digits>`. If the architect's plan writes a room as
+  `5/18` or `Room 18`, normalize to `5.18` in both the SVG and
+  `data/offices.yaml`. Normalize once, keep both surfaces aligned.
 - IDs unique **within the file**.
 - **No person data anywhere in the SVG** — names, emails, photos all
   live in the assignment store. The SVG is the layout; the store is
@@ -49,6 +56,33 @@ Hard rules:
 The `data/offices.yaml` topology declares each cluster's capacity per
 floor. The validator warns if the seat-id count in the SVG doesn't
 match.
+
+## What to trace, what to skip
+
+Trace:
+
+- Every open-space desk where someone could have an assigned seat.
+- Every named room from the architect's legend that someone might
+  occupy as a primary work spot (offices, meeting rooms used as
+  seats, phone rooms with assigned occupants).
+
+Skip:
+
+- Architectural elements that aren't assignable: walls, doors,
+  hallways, corridors, building cores, stairwells.
+- Bathrooms, kitchens, server rooms, storage closets — anything
+  with no seating purpose.
+- Outdoor patios / balconies unless they have permanent desks.
+
+Phone rooms / zoom rooms are a judgment call:
+
+- If the room has an assigned occupant (someone's primary desk is
+  in it), trace as a `seat` with the open-space pattern (`5-Z-04`).
+- If it's a bookable hot-room with no assigned occupants, leave it
+  off — `office` doesn't model hot-desks in v1.
+
+When in doubt: if a shape could ever appear as the answer to "where
+does X sit?", trace it. Otherwise skip.
 
 ## Setting `id` and `class` in Inkscape
 
@@ -71,9 +105,41 @@ Workflow that scales:
    moving on. Catching a typo at cluster N is much better than
    chasing it across the whole floor.
 
-For rooms, the architect's legend usually labels them with the very
-ids you want (`5.18`, `5.21`, …). Use those verbatim — don't
-"clean them up" to a different scheme.
+For rooms, use the architect's number normalized to the
+`<floor>.<NN>` form: an architect's `5.18` stays `5.18`; `5/18` or
+`Room 18` becomes `5.18`. The validator's room regex is strict —
+slashes and labels fail.
+
+## Worked example: cluster T on floor 5
+
+Six desks named `5-T-01` through `5-T-06`, two rows of three.
+Concrete steps:
+
+1. Open the architect's plan in Inkscape. `File → Import` and pick
+   **Embed**. Lock the layer it landed in (`Layer → Lock layer`).
+2. `Layer → Add Layer` → name it `seats`. Make it the active layer.
+3. Press `R` for the rectangle tool. Trace the first desk's
+   outline directly over the architect's drawing.
+4. Open the XML editor (`Ctrl+Shift+X`), select the rect, and set:
+   - `id` = `5-T-01`
+   - `class` = `seat`
+5. `Ctrl+D` to duplicate, drag to the next desk's position, change
+   `id` to `5-T-02` in the XML editor. Repeat for `5-T-03`,
+   `5-T-04`, `5-T-05`, `5-T-06`.
+6. `File → Save As`. In the format dropdown pick **Plain SVG**.
+   Filename: `tlv-floor-5.svg`. **Not Inkscape SVG** — that
+   doubles file size and adds namespaces the parser ignores.
+7. Run the validator:
+
+   ```bash
+   uv run office floors validate floors/tlv-floor-5.svg
+   ```
+
+   Expected: clean output, with cluster `T` reporting capacity 6
+   matching `data/offices.yaml`.
+
+For rooms, drop a `<polygon>` over each named room, set
+`id="5.18"` and `class="room"` via the XML editor, save, validate.
 
 ## Layer suggestion
 
@@ -113,11 +179,12 @@ uv run office floors validate floors/tlv-floor-5.svg
 
 What it checks:
 
-- Top-level `viewBox` is present and well-formed.
+- Top-level `viewBox` is exactly `0 0 1920 1080`. Anything else
+  fails — the web map and Slack handlers all assume this viewport.
 - Every `<rect>` / `<polygon>` with a seat-style id is tagged
   `class="seat"`; every room id is tagged `class="room"`. Untagged
-  shapes are reported.
-- Seat ids parse cleanly into `<floor>-<CLUSTER>-<NN>`.
+  shapes (id present but `class` missing or wrong) are reported.
+- Seat ids match `^\d+-[A-Z]-\d{2}$`; room ids match `^\d+\.\d+$`.
 - No duplicate ids.
 - Cluster capacity in `offices.yaml` matches the seat count in the
   SVG (warning, not an error — useful while you're mid-trace).
@@ -132,7 +199,7 @@ Fix-and-rerun until clean. That's the dev loop.
 | Validator complains about extra ids                                    | A non-seat shape ended up with an id that matches the seat regex. Remove the id.      |
 | Capacity warning persists                                              | Either add the missing seat in Inkscape, or update `clusters.<L>.capacity` in YAML.   |
 | Background is fine on your laptop, broken everywhere else              | The image is linked, not embedded. Re-import with the **Embed** option.               |
-| Architect's room id is `5/18` or `Room 18`                             | Use it **verbatim** — don't normalize. The store keys off the literal architect id.   |
+| Architect's room id is `5/18` or `Room 18`                             | The validator requires `<floor>.<NN>` (e.g. `5.18`). Normalize the id in both the SVG and `data/offices.yaml`. |
 | Two desks have the same id                                             | Probably a `Ctrl+D` you forgot to renumber. The validator points at both.             |
 
 ## End-to-end checklist
