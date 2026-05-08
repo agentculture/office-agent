@@ -132,10 +132,23 @@ def test_append_refuses_missing_id(tmp_path: Path) -> None:
 
 
 def test_append_refuses_missing_file(tmp_path: Path) -> None:
-    bogus = tmp_path / "no-such.yaml"
+    bogus = tmp_path / "data" / "offices.yaml"
     with pytest.raises(OfficeError) as exc:
         append_floor_entry(bogus, "tlv", {"id": "x", "svg": "y.svg"})
     assert "not found" in exc.value.message
+
+
+def test_append_refuses_non_offices_yaml_filename(tmp_path: Path) -> None:
+    """Sonar PR #57 review (S2083): the path must end with
+    `offices.yaml`. Defends against the writer being pointed at a
+    system file via a mis-set --data-dir."""
+    danger = tmp_path / "passwd"
+    danger.write_text("not yaml", encoding="utf-8")
+    with pytest.raises(OfficeError) as exc:
+        append_floor_entry(danger, "tlv", {"id": "x", "svg": "y.svg"})
+    assert "non-offices.yaml" in exc.value.message
+    # File untouched.
+    assert danger.read_text(encoding="utf-8") == "not yaml"
 
 
 def test_append_refuses_malformed_yaml(tmp_path: Path) -> None:
@@ -178,7 +191,7 @@ def test_append_drops_into_empty_floors_list(tmp_path: Path) -> None:
     yaml_path = tmp_path / "data" / "offices.yaml"
     yaml_path.parent.mkdir(parents=True)
     yaml_path.write_text(
-        "offices:\n" "  - id: tlv\n" '    name: "Tel Aviv"\n' "    floors:\n",
+        'offices:\n  - id: tlv\n    name: "Tel Aviv"\n    floors:\n',
         encoding="utf-8",
     )
     append_floor_entry(

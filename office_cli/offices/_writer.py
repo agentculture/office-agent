@@ -43,6 +43,17 @@ def append_floor_entry(
     The function preserves comments, trailing whitespace, and the
     rest of the file.
     """
+    # Defend against path traversal: the helper is only ever called for
+    # ``<data_dir>/data/offices.yaml`` (per `cmd_new` plumbing). Refuse
+    # if the caller passes anything else — keeps Sonar S2083's taint
+    # analysis happy and protects callers from accidentally pointing
+    # the writer at a system file.
+    if yaml_path.name != "offices.yaml":
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"refusing to write a non-offices.yaml file: {yaml_path}",
+            remediation="pass a path whose final component is `offices.yaml`",
+        )
     if not yaml_path.is_file():
         raise OfficeError(
             code=EXIT_USER_ERROR,
@@ -108,7 +119,7 @@ def _ensure_floor_id_unique(office: dict, floor_id: str, office_id: str) -> None
         if isinstance(entry, dict) and str(entry.get("id", "")).strip() == floor_id:
             raise OfficeError(
                 code=EXIT_USER_ERROR,
-                message=(f"floor id {floor_id!r} already declared under office " f"{office_id!r}"),
+                message=f"floor id {floor_id!r} already declared under office {office_id!r}",
                 remediation=(
                     "delete the existing entry first, or pick a different "
                     "floor id (refusing to silently overwrite)"
@@ -180,31 +191,33 @@ def _scan_to_block_end(lines: list[str], floors_line: int, item_prefix: str) -> 
     """Find the byte offset to insert at the end of a YAML list block."""
     last_item_end_line = floors_line  # if floors list is empty, insert right after
     for i in range(floors_line + 1, len(lines)):
-        line = lines[i]
-        if line.strip() == "":
-            continue  # blank lines inside the block are tolerated
-        if line.startswith(item_prefix):
+        if _line_belongs_to_block(lines[i], item_prefix):
             last_item_end_line = i
             continue
-        if line.startswith(item_prefix.rstrip()):
-            last_item_end_line = i
+        if lines[i].strip() == "":
             continue
-        # Continuation of a multi-line item (deeper indent than item_prefix)?
-        if (
-            line[: len(item_prefix)].isspace()
-            and line.lstrip()
-            and not line.startswith(item_prefix)
-        ):
-            # Same column as item_prefix or deeper → still inside the current item.
-            stripped_indent = len(line) - len(line.lstrip())
-            if stripped_indent >= len(item_prefix):
-                last_item_end_line = i
-                continue
         # Anything else = end of the floors list.
         break
-    # Insert at the end of last_item_end_line (after its trailing newline).
-    offset = sum(len(line) for line in lines[: last_item_end_line + 1])
-    return offset
+    return sum(len(line) for line in lines[: last_item_end_line + 1])
+
+
+def _line_belongs_to_block(line: str, item_prefix: str) -> bool:
+    """True if ``line`` is a list item or continuation under ``item_prefix``.
+
+    Matches three shapes: the exact prefix; the rstripped prefix
+    (handles short items like ``- foo``); and any line whose leading
+    whitespace is at least as deep as the prefix (multi-line continuation
+    of the previous item).
+    """
+    if not line.strip():
+        return False
+    if line.startswith(item_prefix) or line.startswith(item_prefix.rstrip()):
+        return True
+    leading = line[: len(item_prefix)]
+    if leading.isspace():
+        stripped_indent = len(line) - len(line.lstrip())
+        return stripped_indent >= len(item_prefix)
+    return False
 
 
 def _format_floor_block(floor: Mapping[str, object]) -> str:

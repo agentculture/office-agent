@@ -541,9 +541,7 @@ def _ensure_floor_id_not_declared(floor_id: str, offices: dict) -> None:
         if floor_id in office.floors:
             raise OfficeError(
                 code=EXIT_USER_ERROR,
-                message=(
-                    f"floor id {floor_id!r} is already declared under office " f"{office.id!r}"
-                ),
+                message=f"floor id {floor_id!r} is already declared under office {office.id!r}",
                 remediation=(
                     "delete the existing entry first, or pick a different id "
                     "(refusing to silently overwrite)"
