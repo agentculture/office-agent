@@ -8,7 +8,7 @@ from pathlib import Path
 from office_cli._config import add_data_dir_arg, resolve_data_dir
 from office_cli.cli._errors import EXIT_USER_ERROR, OfficeError
 from office_cli.cli._output import emit_diagnostic, emit_result
-from office_cli.floors import Severity, parse_svg, validate_floor
+from office_cli.floors import Severity, doctor_svg, parse_svg, validate_floor
 from office_cli.offices import Floor, load_offices
 
 
@@ -67,6 +67,45 @@ def cmd_validate(args: argparse.Namespace) -> int:
     else:
         _print_text(payload)
     return EXIT_USER_ERROR if error_count else 0
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Diagnose-and-fix floor SVGs: drop off-page / duplicate shapes,
+    renumber per ``offices.yaml`` cluster spec."""
+    data_dir = resolve_data_dir(args)
+    floor_index = _index_floors(load_offices(data_dir))
+    targets = _resolve_targets(args, floor_index, data_dir)
+    payload: list[dict[str, object]] = []
+    for target in targets:
+        floor = floor_index.get(target)
+        if floor is None:
+            raise OfficeError(
+                code=EXIT_USER_ERROR,
+                message=f"SVG {target} is not declared in offices.yaml",
+                remediation="add a floors entry pointing at this SVG, or pass an SVG that is",
+            )
+        report = doctor_svg(target, floor, dry_run=bool(args.dry_run))
+        payload.append(report.to_dict())
+    if args.json:
+        emit_result({"results": payload}, json_mode=True)
+    else:
+        _print_doctor_text(payload)
+    return 0
+
+
+def _print_doctor_text(payload: list[dict[str, object]]) -> None:
+    for item in payload:
+        prefix = "DRY-RUN" if item["dry_run"] else "OK   "
+        emit_result(
+            f"{prefix} {item['floor']} ({item['svg']}) "
+            f"seats {item['seats_before']}->{item['seats_after']} "
+            f"rooms {item['rooms_before']}->{item['rooms_after']}",
+            json_mode=False,
+        )
+        for action in item["actions"]:  # type: ignore[union-attr]
+            emit_diagnostic(f"  {action}")
+        for warning in item["warnings"]:  # type: ignore[union-attr]
+            emit_diagnostic(f"  warn: {warning}")
 
 
 def _index_floors(offices: dict[str, object]) -> dict[Path, Floor]:
@@ -151,6 +190,26 @@ def register(sub: argparse._SubParsersAction) -> None:
     p_val.add_argument("--json", action="store_true", help="Emit structured JSON.")
     add_data_dir_arg(p_val)
     p_val.set_defaults(func=cmd_validate)
+
+    p_doc = inner.add_parser(
+        "doctor",
+        help="Diagnose and fix floor SVGs (drop off-page/duplicate shapes; renumber).",
+        description=(
+            "Clean up Inkscape Ctrl+D duplication noise: drop shapes outside the "
+            "viewBox, drop near-duplicates, then renumber surviving seats/rooms "
+            "per the floor's offices.yaml cluster spec."
+        ),
+    )
+    p_doc.add_argument("path", nargs="?", help="Path to a floor SVG.")
+    p_doc.add_argument("--all", action="store_true", help="Doctor every declared SVG.")
+    p_doc.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what would change without writing the SVG.",
+    )
+    p_doc.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    add_data_dir_arg(p_doc)
+    p_doc.set_defaults(func=cmd_doctor)
 
     p.set_defaults(func=lambda args: _missing_subcommand(p))
 

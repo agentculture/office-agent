@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-05-08
+
+### Added
+
+- `office floors doctor [PATH] [--all] [--dry-run] [--json]` — diagnose-and-fix verb for floor SVGs. Drops shapes outside the 1920×1080 viewBox, deduplicates near-overlapping shapes, and renumbers survivors per the floor's `offices.yaml` cluster spec. Preserves already-valid ids; only renames garbled ones (the typical Inkscape `Ctrl+D` cascade). Documented in `office explain floors doctor` and cross-linked from `docs/tracing-guide.md`.
+
 ## [0.10.2] - 2026-05-08
 
 ### Added

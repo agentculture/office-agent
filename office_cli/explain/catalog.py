@@ -110,6 +110,7 @@ List configured offices/floors and validate floor SVGs against the
 
 - `office floors list [--office ID] [--json] [--data-dir DIR]`
 - `office floors validate [PATH] [--all] [--json] [--data-dir DIR]`
+- `office floors doctor [PATH] [--all] [--dry-run] [--json] [--data-dir DIR]`
 
 ## Validation rules
 
@@ -156,6 +157,52 @@ Errors fail the run with exit code 1; warnings do not.
 
 Text: one line per floor (`OK` / `FAIL`) plus indented `error [rule]:` /
 `warn [rule]:` lines. JSON: `{"results": [{"floor","ok","errors","warnings",...}]}`.
+"""
+
+_FLOORS_DOCTOR = """\
+# office floors doctor
+
+Diagnose and fix common Inkscape pitfalls in a traced floor SVG.
+Inkscape's `Ctrl+D` duplication generates ids like `5-T-06-7-4-0-8`
+and often leaves shapes off-page; this verb cleans the noise so the
+file passes `office floors validate`.
+
+## Usage
+
+    office floors doctor floors/tlv-floor-5.svg
+    office floors doctor floors/tlv-floor-5.svg --dry-run
+    office floors doctor --all
+    office floors doctor floors/tlv-floor-5.svg --json
+
+## What it does (in order)
+
+1. Drops `<rect class="seat">` and `<polygon class="room">` whose
+   bounding-box center is outside the 1920x1080 viewBox.
+2. Drops near-duplicate elements (centers within ~6 px of an
+   already-kept element of the same class).
+3. Sorts surviving elements row-major (y bucketed by ~30 px, then x).
+4. Renumbers seats per the floor's `offices.yaml` cluster spec
+   (clusters walked in alphabetical order, capacities filled in
+   sequence). Excess seats are dropped.
+5. Renumbers rooms per the floor's declared room ids in
+   `offices.yaml`. Excess rooms are dropped.
+
+## Output
+
+Text: a status line plus indented action lines and any warnings:
+
+    OK    tlv-floor-5 (floors/tlv-floor-5.svg) seats 21->5 rooms 14->1
+      dropped 16 off-page seats
+      dropped 13 near-duplicate rooms
+      renamed 5 seats
+      renamed 1 room
+      warn: 5 seats traced; offices.yaml declares 8 ...
+
+JSON: `{"results": [{<fields>}]}` where `<fields>` includes
+`floor`, `svg`, `dry_run`, `seats_before`, `seats_after`,
+`rooms_before`, `rooms_after`, `actions`, `warnings`.
+
+`--dry-run` reports what would change without writing the SVG.
 """
 
 _SEATS = """\
@@ -341,6 +388,7 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("floors",): _FLOORS,
     ("floors", "list"): _FLOORS_LIST,
     ("floors", "validate"): _FLOORS_VALIDATE,
+    ("floors", "doctor"): _FLOORS_DOCTOR,
     ("seats",): _SEATS,
     ("seats", "assign"): _SEATS_ASSIGN,
     ("seats", "move"): _SEATS_MOVE,
