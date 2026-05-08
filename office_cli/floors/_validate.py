@@ -35,13 +35,14 @@ class Issue:
 def validate_floor(svg: FloorSvg, floor: Floor) -> list[Issue]:
     """Return a list of issues; empty list means the SVG conforms.
 
-    A floor with ``status: draft`` (issue #54 scaffold output) skips
-    the cluster-capacity check — by definition the example seat is a
-    placeholder and won't match the declared capacity. The id-format,
-    duplicate, untagged, and view-box checks all still run, so a
-    scaffold with garbled ids still fails. The drop-in replacement is
-    a single ``floor.draft`` warning telling the operator to trace the
-    rest in Inkscape.
+    A floor with ``status: draft`` (issue #54 scaffold output) gets
+    an additional ``floor-draft`` warning so operators see at-a-glance
+    that the trace is incomplete. The cluster-capacity check still
+    runs for drafts because it emits a warning (not an error) — Qodo
+    PR #56 review pointed out that suppressing it for drafts violated
+    the rule "warn on seat-count vs YAML-capacity mismatch", and
+    warnings don't fail the build anyway. All other checks (id-format,
+    duplicates, viewBox, untagged shapes) apply unconditionally.
     """
     issues: list[Issue] = []
     issues.extend(_check_view_box(svg))
@@ -51,6 +52,7 @@ def validate_floor(svg: FloorSvg, floor: Floor) -> list[Issue]:
     for rid in svg.room_ids:
         issues.extend(_check_room(rid, floor))
     issues.extend(_check_untagged(svg))
+    issues.extend(_check_capacity(svg, floor))
     if floor.status == "draft":
         issues.append(
             Issue(
@@ -60,8 +62,6 @@ def validate_floor(svg: FloorSvg, floor: Floor) -> list[Issue]:
                 "trace seats/rooms in Inkscape and set status: active when complete",
             )
         )
-    else:
-        issues.extend(_check_capacity(svg, floor))
     return issues
 
 

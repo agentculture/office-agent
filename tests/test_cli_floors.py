@@ -539,3 +539,127 @@ def test_floors_scaffold_requires_args_or_manifest(
     assert rc != 0
     err = capsys.readouterr().err
     assert "manifest" in err or "floor id" in err
+
+
+def test_floors_scaffold_ambiguous_floor_id(
+    data_dir: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Qodo PR #56 review: scaffold must refuse to pick when two
+    offices declare the same floor id, the same way validate/doctor do."""
+    from office_cli.floors import _scaffold as scaffold_mod
+
+    monkeypatch.setattr(scaffold_mod, "_render_pdf_page", lambda *a, **kw: b"\x89PNG")
+    yaml_path = data_dir / "data" / "offices.yaml"
+    yaml_path.write_text(
+        yaml_path.read_text(encoding="utf-8")
+        + (
+            "\n  - id: dup\n"
+            "    name: Duplicate Office\n"
+            "    floors:\n"
+            "      - id: tlv-floor-5\n"
+            "        svg: floors/dup.svg\n"
+            "        clusters:\n"
+            "          T: { capacity: 1, type: open-space }\n"
+        ),
+        encoding="utf-8",
+    )
+    (data_dir / "floors" / "dup.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080"/>\n',
+        encoding="utf-8",
+    )
+    pdf = data_dir / "fake.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+
+    rc = main(
+        [
+            "floors",
+            "scaffold",
+            "tlv-floor-5",
+            "--pdf",
+            str(pdf),
+            "--page",
+            "1",
+            "--force",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "ambiguous" in err
+    assert "tlv-floor-5" in err
+
+
+def test_floors_scaffold_out_resolves_against_data_dir(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Qodo PR #56 review: relative --out paths must resolve against
+    --data-dir (not cwd), matching validate/doctor."""
+    from office_cli.floors import _scaffold as scaffold_mod
+
+    monkeypatch.setattr(scaffold_mod, "_render_pdf_page", lambda *a, **kw: b"\x89PNG")
+    pdf = data_dir / "fake.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    # Run from an unrelated cwd so a cwd-relative resolution would
+    # land somewhere else.
+    other = data_dir.parent / "elsewhere"
+    other.mkdir()
+    monkeypatch.chdir(other)
+
+    rc = main(
+        [
+            "floors",
+            "scaffold",
+            "tlv-floor-5",
+            "--pdf",
+            str(pdf),
+            "--page",
+            "1",
+            "--out",
+            "floors/custom.svg",  # relative
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    assert rc == 0
+    # Resolved against data_dir, not cwd:
+    assert (data_dir / "floors" / "custom.svg").is_file()
+    assert not (other / "floors" / "custom.svg").exists()
+
+
+def test_floors_scaffold_manifest_atomicity(
+    data_dir: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Qodo PR #56 review: a manifest with a bad job partway through
+    must not leave files written by earlier jobs. The verb resolves
+    every job before writing any SVG."""
+    from office_cli.floors import _scaffold as scaffold_mod
+
+    monkeypatch.setattr(scaffold_mod, "_render_pdf_page", lambda *a, **kw: b"\x89PNG")
+    pdf = data_dir / "fake.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    manifest = data_dir / "boot.yaml"
+    # First entry is valid; second is unknown — should fail before writing.
+    manifest.write_text(
+        f"pdf: {pdf}\n"
+        "floors:\n"
+        "  - { id: tlv-floor-5, page: 1 }\n"
+        "  - { id: no-such-floor, page: 1 }\n",
+        encoding="utf-8",
+    )
+    floor5_before = (data_dir / "floors" / "tlv-floor-5.svg").read_bytes()
+
+    rc = main(
+        [
+            "floors",
+            "scaffold",
+            "--manifest",
+            str(manifest),
+            "--force",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    assert rc != 0
+    # The valid entry must NOT have been written:
+    assert (data_dir / "floors" / "tlv-floor-5.svg").read_bytes() == floor5_before

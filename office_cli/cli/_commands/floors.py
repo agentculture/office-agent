@@ -169,29 +169,35 @@ def cmd_scaffold(args: argparse.Namespace) -> int:
     """
     data_dir = resolve_data_dir(args)
     floor_index = _index_floors(load_offices(data_dir))
-    by_id = {floor.id: (path, floor) for path, floor in floor_index.items()}
     jobs = _scaffold_jobs(args, data_dir)
-    payload: list[dict[str, object]] = []
+
+    # Phase 1 — resolve every job (id → floor + out path; check overwrite).
+    # Manifests must be all-or-nothing: a bad job at index 5 must not leave
+    # files written by jobs 1-4. Qodo PR #56.
+    plan: list[tuple[str, Path, int | str, Floor, Path]] = []
     for floor_id, pdf_path, page in jobs:
-        match = by_id.get(floor_id)
-        if match is None:
-            raise OfficeError(
-                code=EXIT_USER_ERROR,
-                message=f"floor id {floor_id!r} is not declared in offices.yaml",
-                remediation=(
-                    "add a floors entry for this id (status: draft is fine) "
-                    "with at least one cluster, then re-run scaffold"
-                ),
-            )
-        existing_path, floor = match
-        out_path = _scaffold_out_path(args, floor_id, existing_path)
+        floor, existing_path = _resolve_scaffold_floor(floor_id, floor_index)
+        out_path = _scaffold_out_path(args, existing_path, data_dir)
         if out_path.exists() and not args.force:
             raise OfficeError(
                 code=EXIT_USER_ERROR,
                 message=f"refusing to overwrite existing SVG: {out_path}",
                 remediation="pass --force to overwrite, or remove the file first",
             )
+        plan.append((floor_id, pdf_path, page, floor, out_path))
+
+    # Phase 2 — render every SVG into memory. Any poppler error here also
+    # leaves the filesystem untouched.
+    rendered: list[tuple[str, Path, int | str, Path, bytes]] = []
+    for floor_id, pdf_path, page, floor, out_path in plan:
         svg_bytes = scaffold_svg(floor=floor, pdf=pdf_path, page=page)
+        rendered.append((floor_id, pdf_path, page, out_path, svg_bytes))
+
+    # Phase 3 — write everything. If write fails midway it's a filesystem
+    # problem the operator needs to know about; we don't try to roll back
+    # already-written files (would mask the underlying issue).
+    payload: list[dict[str, object]] = []
+    for floor_id, pdf_path, page, out_path, svg_bytes in rendered:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(svg_bytes)
         payload.append(
@@ -336,11 +342,51 @@ def _coerce_page(page: object) -> int | str:
     )
 
 
-def _scaffold_out_path(args: argparse.Namespace, floor_id: str, existing: Path) -> Path:
-    """Default to the existing SVG path from offices.yaml; honor --out."""
-    if getattr(args, "out", None):
-        return Path(args.out).expanduser().resolve()
-    return existing
+def _resolve_scaffold_floor(floor_id: str, floor_index: dict[Path, Floor]) -> tuple[Floor, Path]:
+    """Look up a floor by id; refuse ambiguous matches.
+
+    Floor ids are unique within an office but not globally — two
+    offices could declare the same id. Mirrors validate/doctor's
+    ambiguity guard so scaffold can't silently write to the wrong
+    file. Qodo PR #56.
+    """
+    matches = [(floor, path) for path, floor in floor_index.items() if floor.id == floor_id]
+    if not matches:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"floor id {floor_id!r} is not declared in offices.yaml",
+            remediation=(
+                "add a floors entry for this id (status: draft is fine) "
+                "with at least one cluster, then re-run scaffold"
+            ),
+        )
+    if len(matches) > 1:
+        joined = ", ".join(str(p) for _, p in matches)
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"floor id {floor_id!r} is ambiguous — matches: {joined}",
+            remediation=(
+                "pass --out <path> with the explicit SVG path, or rename one "
+                "of the floor ids in offices.yaml"
+            ),
+        )
+    return matches[0]
+
+
+def _scaffold_out_path(args: argparse.Namespace, existing: Path, data_dir: Path) -> Path:
+    """Default to the existing SVG path from offices.yaml; honor --out.
+
+    Relative ``--out`` resolves against ``data_dir``, matching the
+    semantics validate/doctor use for relative SVG path arguments.
+    Qodo PR #56.
+    """
+    raw = getattr(args, "out", None)
+    if not raw:
+        return existing
+    p = Path(raw).expanduser()
+    if not p.is_absolute():
+        p = data_dir / p
+    return p.resolve()
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
