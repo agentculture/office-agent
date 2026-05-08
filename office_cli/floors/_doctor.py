@@ -27,12 +27,6 @@ _VIEW_H = 1080
 _DEDUP_PX = 6.0  # bounding-box centers within this distance treated as duplicates
 _ROW_TOL = 30.0  # y-pixel grouping tolerance for row-major spatial sort
 
-# Register namespaces so writes preserve Inkscape's namespace decls.
-ET.register_namespace("", "http://www.w3.org/2000/svg")
-ET.register_namespace("inkscape", "http://www.inkscape.org/namespaces/inkscape")
-ET.register_namespace("sodipodi", "http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd")
-ET.register_namespace("xlink", "http://www.w3.org/1999/xlink")
-
 
 @dataclass(frozen=True)
 class DoctorReport:
@@ -90,69 +84,26 @@ def doctor_svg(svg_path: Path, floor: Floor, *, dry_run: bool = False) -> Doctor
             remediation="check the path or create the SVG via Inkscape first",
         )
 
-    tree = ET.parse(svg_path)
+    tree = _parse(svg_path)
     root = tree.getroot()
     parents = {child: parent for parent in root.iter() for child in parent}
 
-    seats = [
-        el
-        for el in root.iter()
-        if el.tag == f"{_SVG_NS}rect" and (el.get("class") or "").strip() == "seat"
-    ]
-    rooms = [
-        el
-        for el in root.iter()
-        if el.tag == f"{_SVG_NS}polygon" and (el.get("class") or "").strip() == "room"
-    ]
+    seats = _select(root, "rect", "seat")
+    rooms = _select(root, "polygon", "room")
     seats_before = len(seats)
     rooms_before = len(rooms)
 
     actions: list[str] = []
-    warnings: list[str] = []
-
-    seats, dropped = _drop_off_page(seats, parents)
-    if dropped:
-        actions.append(f"dropped {dropped} off-page seats")
-    rooms, dropped = _drop_off_page(rooms, parents)
-    if dropped:
-        actions.append(f"dropped {dropped} off-page rooms")
-
-    seats, dropped = _dedupe(seats, parents)
-    if dropped:
-        actions.append(f"dropped {dropped} near-duplicate seats")
-    rooms, dropped = _dedupe(rooms, parents)
-    if dropped:
-        actions.append(f"dropped {dropped} near-duplicate rooms")
-
-    floor_num = floor.number
-    seat_slots = _seat_ids_for(floor_num, floor.clusters)
-    cluster_total = len(seat_slots)
-    seat_renamed, seat_excess = _assign_ids(seats, seat_slots, parents)
-    if seat_renamed:
-        actions.append(f"renamed {seat_renamed} seats")
-    if seat_excess:
-        actions.append(f"dropped {seat_excess} excess seats")
-
+    seat_slots = _seat_ids_for(floor.number, floor.clusters)
     room_slots = list(floor.rooms.keys())
-    room_renamed, room_excess = _assign_ids(rooms, room_slots, parents)
-    if room_renamed:
-        actions.append(f"renamed {room_renamed} rooms")
-    if room_excess:
-        actions.append(f"dropped {room_excess} excess rooms")
 
-    seats_after = min(len(seats) - seat_excess, cluster_total)
+    seats, seat_excess = _clean_category(seats, seat_slots, parents, "seats", actions)
+    rooms, room_excess = _clean_category(rooms, room_slots, parents, "rooms", actions)
+
+    seats_after = min(len(seats) - seat_excess, len(seat_slots))
     rooms_after = min(len(rooms) - room_excess, len(room_slots))
 
-    if seats_after < cluster_total:
-        warnings.append(
-            f"{seats_after} seats traced; offices.yaml declares {cluster_total} "
-            "(trace more in Inkscape and re-run)"
-        )
-    if rooms_after < len(room_slots):
-        warnings.append(
-            f"{rooms_after} rooms traced; offices.yaml declares {len(room_slots)} "
-            "(trace more in Inkscape and re-run)"
-        )
+    warnings = _capacity_warnings(seats_after, len(seat_slots), rooms_after, len(room_slots))
 
     if not dry_run and actions:
         tree.write(svg_path, encoding="utf-8", xml_declaration=True)
@@ -168,6 +119,68 @@ def doctor_svg(svg_path: Path, floor: Floor, *, dry_run: bool = False) -> Doctor
         actions=actions,
         warnings=warnings,
     )
+
+
+def _parse(svg_path: Path) -> ET.ElementTree:
+    """Parse the SVG, wrapping malformed-XML errors as ``OfficeError``."""
+    try:
+        return ET.parse(svg_path)
+    except ET.ParseError as err:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"SVG is not well-formed XML: {svg_path}: {err}",
+            remediation="open in Inkscape and re-save as Plain SVG",
+        ) from err
+
+
+def _select(root: ET.Element, tag: str, cls: str) -> list[ET.Element]:
+    return [
+        el
+        for el in root.iter()
+        if el.tag == f"{_SVG_NS}{tag}" and (el.get("class") or "").strip() == cls
+    ]
+
+
+def _clean_category(
+    items: list[ET.Element],
+    slots: list[str],
+    parents: dict[ET.Element, ET.Element],
+    label: str,
+    actions: list[str],
+) -> tuple[list[ET.Element], int]:
+    """Drop off-page + duplicate items, then renumber. Mutates ``actions``.
+
+    Returns ``(items_after_drops, excess_dropped_during_renumber)``.
+    """
+    items, off_page = _drop_off_page(items, parents)
+    if off_page:
+        actions.append(f"dropped {off_page} off-page {label}")
+    items, dupes = _dedupe(items, parents)
+    if dupes:
+        actions.append(f"dropped {dupes} near-duplicate {label}")
+    renamed, excess = _assign_ids(items, slots, parents)
+    if renamed:
+        actions.append(f"renamed {renamed} {label}")
+    if excess:
+        actions.append(f"dropped {excess} excess {label}")
+    return items, excess
+
+
+def _capacity_warnings(
+    seats_after: int, seat_slots: int, rooms_after: int, room_slots: int
+) -> list[str]:
+    out: list[str] = []
+    if seats_after < seat_slots:
+        out.append(
+            f"{seats_after} seats traced; offices.yaml declares {seat_slots} "
+            "(trace more in Inkscape and re-run)"
+        )
+    if rooms_after < room_slots:
+        out.append(
+            f"{rooms_after} rooms traced; offices.yaml declares {room_slots} "
+            "(trace more in Inkscape and re-run)"
+        )
+    return out
 
 
 # -- helpers ----------------------------------------------------------------
@@ -228,6 +241,12 @@ def _seat_ids_for(floor_num: str, clusters) -> list[str]:
 
 
 def _center(el: ET.Element) -> tuple[float, float]:
+    """Bounding-box center of a ``<rect>`` or ``<polygon>``.
+
+    Polygons with malformed ``points`` (empty, single number, etc.)
+    return ``(0.0, 0.0)`` rather than raising — the caller will then
+    treat the shape as an off-page outlier and drop it.
+    """
     if el.tag == f"{_SVG_NS}rect":
         x = float(el.get("x", 0))
         y = float(el.get("y", 0))
@@ -237,11 +256,11 @@ def _center(el: ET.Element) -> tuple[float, float]:
     if el.tag == f"{_SVG_NS}polygon":
         pts = el.get("points", "")
         nums = [float(c) for c in re.split(r"[\s,]+", pts.strip()) if c]
-        if not nums:
-            return (0.0, 0.0)
         xs = nums[0::2]
         ys = nums[1::2]
-        return (sum(xs) / len(xs), sum(ys) / len(ys))
+        if not xs or not ys:
+            return (0.0, 0.0)
+        return ((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2)
     return (0.0, 0.0)
 
 

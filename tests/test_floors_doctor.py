@@ -167,3 +167,40 @@ def test_doctor_missing_file_raises(data_dir: Path) -> None:
     with pytest.raises(OfficeError) as exc:
         doctor_svg(bogus, _floor(data_dir))
     assert exc.value.code == EXIT_USER_ERROR
+
+
+def test_doctor_malformed_xml_raises_office_error(data_dir: Path) -> None:
+    """A malformed SVG must surface as ``OfficeError``, not a raw
+    ``ET.ParseError`` traceback (consistent with ``parse_svg``)."""
+    svg_path = data_dir / "floors" / "tlv-floor-5.svg"
+    svg_path.write_text("<svg><rect class='seat' id='oops'</svg>\n", encoding="utf-8")
+    with pytest.raises(OfficeError) as exc:
+        doctor_svg(svg_path, _floor(data_dir))
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "well-formed" in exc.value.message.lower()
+
+
+def test_doctor_polygon_with_malformed_points_does_not_crash(
+    data_dir: Path,
+) -> None:
+    """Polygons with empty or odd ``points`` must not raise
+    ZeroDivisionError; the doctor treats them as off-page outliers
+    and drops them."""
+    svg_text = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080">'
+        # Empty points → center returns (0,0); inside the viewBox top-left
+        # but functionally a "bad" room. doctor still must not crash.
+        '<polygon id="empty" class="room" points=""/>'
+        # Single number (odd token count) → also handled.
+        '<polygon id="single" class="room" points="50"/>'
+        # A real, valid room.
+        '<polygon id="ok" class="room" points="1400,300 1700,300 1700,500 1400,500"/>'
+        "</svg>\n"
+    )
+    svg_path = data_dir / "floors" / "tlv-floor-5.svg"
+    svg_path.write_text(svg_text, encoding="utf-8")
+
+    report = doctor_svg(svg_path, _floor(data_dir))
+    # Doctor completed; the valid room got the slot.
+    assert report.rooms_after == 1

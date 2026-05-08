@@ -11,6 +11,8 @@ from office_cli.cli._output import emit_diagnostic, emit_result
 from office_cli.floors import Severity, doctor_svg, parse_svg, validate_floor
 from office_cli.offices import Floor, load_offices
 
+_HELP_JSON = "Emit structured JSON."
+
 
 def cmd_list(args: argparse.Namespace) -> int:
     data_dir = resolve_data_dir(args)
@@ -180,14 +182,14 @@ def register(sub: argparse._SubParsersAction) -> None:
 
     p_list = inner.add_parser("list", help="List configured offices and floors.")
     p_list.add_argument("--office", help="Restrict to a single office id.")
-    p_list.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    p_list.add_argument("--json", action="store_true", help=_HELP_JSON)
     add_data_dir_arg(p_list)
     p_list.set_defaults(func=cmd_list)
 
     p_val = inner.add_parser("validate", help="Validate one or all floor SVGs.")
     p_val.add_argument("path", nargs="?", help="Path to a floor SVG.")
     p_val.add_argument("--all", action="store_true", help="Validate every declared SVG.")
-    p_val.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    p_val.add_argument("--json", action="store_true", help=_HELP_JSON)
     add_data_dir_arg(p_val)
     p_val.set_defaults(func=cmd_validate)
 
@@ -207,7 +209,7 @@ def register(sub: argparse._SubParsersAction) -> None:
         action="store_true",
         help="Report what would change without writing the SVG.",
     )
-    p_doc.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    p_doc.add_argument("--json", action="store_true", help=_HELP_JSON)
     add_data_dir_arg(p_doc)
     p_doc.set_defaults(func=cmd_doctor)
 
