@@ -847,3 +847,214 @@ def test_floors_new_refuses_existing_floor_id(
     assert rc != 0
     err = capsys.readouterr().err
     assert "already declared" in err
+
+
+def test_floors_new_retargets_room_ids(
+    data_dir: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--copy-from` must retarget room ids to the destination floor's
+    number — `5.18` (floor-5) becomes `3.18` (floor-3). Both the
+    offices.yaml entry and the SVG polygon id must reflect the new id."""
+    from office_cli.floors import _scaffold as scaffold_mod
+
+    monkeypatch.setattr(scaffold_mod, "_render_pdf_page", lambda *a, **kw: b"\x89PNG")
+    pdf = data_dir / "fake.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+
+    rc = main(
+        [
+            "floors",
+            "new",
+            "tlv-floor-3",
+            "--pdf",
+            str(pdf),
+            "--page",
+            "1",
+            "--copy-from",
+            "tlv-floor-5",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    assert rc == 0
+    yaml_text = (data_dir / "data" / "offices.yaml").read_text(encoding="utf-8")
+    # offices.yaml must have the retargeted room id, not the source's.
+    assert '"3.18"' in yaml_text
+    assert '"5.18"' not in yaml_text.split("tlv-floor-3")[1]  # not in floor-3's block
+    # SVG polygon id must also be retargeted (copy_layout uses dst_floor.rooms keys).
+    svg_text = (data_dir / "floors" / "tlv-floor-3.svg").read_text(encoding="utf-8")
+    assert 'id="3.18"' in svg_text
+    assert 'id="5.18"' not in svg_text
+
+
+def test_retarget_room_id_passes_through_non_conforming(data_dir: Path) -> None:
+    """Direct unit test: a custom-format room id (no `<floor>.<NN>`)
+    is left alone rather than being mangled into something invalid."""
+    from office_cli.cli._commands.floors import _retarget_room_id
+
+    assert _retarget_room_id("5.18", "3") == "3.18"
+    assert _retarget_room_id("12.18", "14") == "14.18"
+    # Non-conforming forms pass through:
+    assert _retarget_room_id("legacy-MR-A", "3") == "legacy-MR-A"
+    assert _retarget_room_id("Conf 5.18", "3") == "Conf 5.18"
+
+
+def test_floors_new_manifest_creates_multiple_floors(
+    data_dir: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Manifest mode: one PDF, multiple {id, page} entries, all created
+    with retargeted ids."""
+    from office_cli.floors import _scaffold as scaffold_mod
+
+    monkeypatch.setattr(scaffold_mod, "_render_pdf_page", lambda *a, **kw: b"\x89PNG")
+    pdf = data_dir / "fake.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    manifest = data_dir / "boot.yaml"
+    manifest.write_text(
+        f"pdf: {pdf}\n"
+        "copy_from: tlv-floor-5\n"
+        "floors:\n"
+        "  - { id: tlv-floor-2, page: 7 }\n"
+        "  - { id: tlv-floor-3, page: 8 }\n"
+        "  - { id: tlv-floor-4, page: 9 }\n",
+        encoding="utf-8",
+    )
+
+    rc = main(
+        [
+            "floors",
+            "new",
+            "--manifest",
+            str(manifest),
+            "--data-dir",
+            str(data_dir),
+            "--json",
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert len(payload["results"]) == 3
+    assert all(r["ok"] for r in payload["results"])
+    yaml_text = (data_dir / "data" / "offices.yaml").read_text(encoding="utf-8")
+    # Each new floor's room id is retargeted to its own floor number.
+    assert '"2.18"' in yaml_text
+    assert '"3.18"' in yaml_text
+    assert '"4.18"' in yaml_text
+    # Three SVGs written.
+    for fid in ("tlv-floor-2", "tlv-floor-3", "tlv-floor-4"):
+        assert (data_dir / "floors" / f"{fid}.svg").is_file()
+
+
+def test_floors_new_manifest_per_entry_copy_from_override(
+    data_dir: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Per-entry `copy_from` overrides the manifest top-level default."""
+    from office_cli.floors import _scaffold as scaffold_mod
+
+    monkeypatch.setattr(scaffold_mod, "_render_pdf_page", lambda *a, **kw: b"\x89PNG")
+    pdf = data_dir / "fake.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+
+    # First create floor-3 with floor-5's layout — that becomes a
+    # candidate stencil for further copies.
+    rc = main(
+        [
+            "floors",
+            "new",
+            "tlv-floor-3",
+            "--pdf",
+            str(pdf),
+            "--page",
+            "1",
+            "--copy-from",
+            "tlv-floor-5",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    assert rc == 0
+    capsys.readouterr()  # drop output
+
+    # Now manifest-create floor-4 (default copy_from = floor-5) and
+    # floor-2 (override to floor-3).
+    manifest = data_dir / "boot.yaml"
+    manifest.write_text(
+        f"pdf: {pdf}\n"
+        "copy_from: tlv-floor-5\n"
+        "floors:\n"
+        "  - { id: tlv-floor-4, page: 9 }\n"
+        "  - { id: tlv-floor-2, page: 7, copy_from: tlv-floor-3 }\n",
+        encoding="utf-8",
+    )
+    rc = main(
+        [
+            "floors",
+            "new",
+            "--manifest",
+            str(manifest),
+            "--data-dir",
+            str(data_dir),
+            "--json",
+        ]
+    )
+    assert rc == 0
+    capsys.readouterr()  # drain
+    # Floor-2 used floor-3 (which itself derived from floor-5), so its
+    # room id is `2.18` (retargeted from floor-3's `3.18`).
+    yaml_text = (data_dir / "data" / "offices.yaml").read_text(encoding="utf-8")
+    assert '"2.18"' in yaml_text
+
+
+def test_floors_new_manifest_partial_failure(
+    data_dir: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One bad entry must not block the others. Exit code is non-zero
+    when any entry failed; the report distinguishes ok vs fail per entry."""
+    from office_cli.floors import _scaffold as scaffold_mod
+
+    monkeypatch.setattr(scaffold_mod, "_render_pdf_page", lambda *a, **kw: b"\x89PNG")
+    pdf = data_dir / "fake.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    manifest = data_dir / "boot.yaml"
+    # Second entry references an unknown copy_from id.
+    manifest.write_text(
+        f"pdf: {pdf}\n"
+        "floors:\n"
+        "  - { id: tlv-floor-2, page: 7, copy_from: tlv-floor-5 }\n"
+        "  - { id: tlv-floor-3, page: 8, copy_from: no-such-floor }\n",
+        encoding="utf-8",
+    )
+
+    rc = main(
+        [
+            "floors",
+            "new",
+            "--manifest",
+            str(manifest),
+            "--data-dir",
+            str(data_dir),
+            "--json",
+        ]
+    )
+    assert rc != 0
+    payload = json.loads(capsys.readouterr().out)
+    by_id = {r["floor"]: r for r in payload["results"]}
+    assert by_id["tlv-floor-2"]["ok"] is True
+    assert by_id["tlv-floor-3"]["ok"] is False
+    assert "no-such-floor" in by_id["tlv-floor-3"]["error"]
+    # Successful entry IS persisted (per-entry atomicity, not batch).
+    yaml_text = (data_dir / "data" / "offices.yaml").read_text(encoding="utf-8")
+    assert "tlv-floor-2" in yaml_text
+    # Failed entry is NOT persisted.
+    assert "tlv-floor-3" not in yaml_text or "id: tlv-floor-3" not in yaml_text
+
+
+def test_floors_new_no_floor_id_no_manifest(
+    data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pdf = data_dir / "fake.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    rc = main(["floors", "new", "--pdf", str(pdf), "--page", "1", "--data-dir", str(data_dir)])
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "floor id" in err or "manifest" in err

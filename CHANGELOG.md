@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-05-08
+
+### Added
+
+- `office floors new --manifest <yaml>` — batch mode. One invocation creates many floors from a single manifest, each independently transactional. Manifest fields: `pdf` (required), `office` (optional, auto-detected for single-office), `copy_from` (optional default applied to every entry), and a `floors[{id, page, copy_from?}]` list. Per-entry `copy_from` overrides the manifest top-level. Successfully created floors become candidate copy-from sources for later entries in the same run (offices.yaml is reloaded per entry). Exit code is non-zero if any entry failed; the report distinguishes per-entry success vs failure.
+- `data/floor-bootstrap.yaml.example` — extended with an illustrative `office floors new --manifest` example block alongside the existing scaffold-mode block.
+
+### Changed
+
+- `office floors new --copy-from <src>` now **retargets room ids** to the destination floor's number when inheriting from the source. `5.18` (floor-5) becomes `3.18` on floor-3, `12.18` on floor-12, etc. Seats already retargeted (cluster letter + sequence preserved, only the floor number swapped); rooms now follow the same pattern. Non-conforming room ids (custom strings, legacy formats) pass through unchanged. The polygon `points`, room `name` / `type` / `capacity` are unchanged — only the id rewrites.
+
+### Fixed
+
+- `office_cli/floors/_copy_layout.py` — replace `seats_parent or dst_root` with explicit `is not None` checks. Avoids a Python deprecation warning ("Testing an element's truth value will raise an exception in future versions") on every call.
+
 ## [0.13.0] - 2026-05-08
 
 ### Added
