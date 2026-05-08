@@ -110,10 +110,22 @@ else
     # \x0c). Walk the output, count form feeds, find pages that contain
     # the label (case-insensitive substring). Require exactly one match.
     label_lower="$(printf '%s' "$PAGE_OR_LABEL" | tr '[:upper:]' '[:lower:]')"
+
+    # Capture pdftotext's output and exit code separately so a poppler
+    # failure (encrypted PDF, corrupt structure, etc.) surfaces as a
+    # clean env error rather than getting confused with "0 matches".
+    pdftotext_err="$(mktemp)"
+    trap 'rm -f "$pdftotext_err"' EXIT
+    if ! text="$(pdftotext -layout "$PDF" - 2>"$pdftotext_err")"; then
+        err_msg="$(cat "$pdftotext_err")"
+        hint "the PDF may be encrypted, corrupt, or unreadable by poppler"
+        [[ -n "$err_msg" ]] && hint "pdftotext said: $err_msg"
+        die 2 "pdftotext failed reading $PDF"
+    fi
+
     matches=()
     page_no=1
     page_buf=""
-    # shellcheck disable=SC2002 — explicit cat keeps the loop readable.
     while IFS= read -r line; do
         if [[ "$line" == $'\x0c'* ]]; then
             if [[ "$(printf '%s' "$page_buf" | tr '[:upper:]' '[:lower:]')" == *"$label_lower"* ]]; then
@@ -124,7 +136,7 @@ else
         else
             page_buf+="$line"$'\n'
         fi
-    done < <(pdftotext -layout "$PDF" -)
+    done <<<"$text"
     # Tail page (no trailing form feed):
     if [[ "$(printf '%s' "$page_buf" | tr '[:upper:]' '[:lower:]')" == *"$label_lower"* ]]; then
         matches+=("$page_no")
@@ -148,7 +160,10 @@ fi
 
 # Make output dir absolute / accessible.
 out_dir="$(dirname "$OUT_PNG")"
-[[ -d "$out_dir" ]] || die 2 "output directory does not exist: $out_dir"
+if [[ ! -d "$out_dir" ]]; then
+    hint "create the directory first (mkdir -p '$out_dir') or pass an existing path"
+    die 2 "output directory does not exist: $out_dir"
+fi
 
 # --- extract + scale -------------------------------------------------------
 
@@ -156,22 +171,35 @@ out_dir="$(dirname "$OUT_PNG")"
 # width (so page 7 of a 21-page doc → "<prefix>-07.png"). Use a tmp
 # prefix and rename with a glob so we don't have to predict the padding.
 tmpdir="$(mktemp -d)"
-trap 'rm -rf "$tmpdir"' EXIT
+# Extend the EXIT trap to also clean up the tmpdir without dropping the
+# pdftotext_err cleanup set above (if label-search ran).
+trap 'rm -rf "$tmpdir"; rm -f "${pdftotext_err:-}"' EXIT
 prefix="$tmpdir/page"
 
-pdftoppm \
-    -png \
-    -f "$PAGE" -l "$PAGE" \
-    -r "$DPI" \
-    -scale-to-x "$WIDTH" \
-    -scale-to-y -1 \
-    "$PDF" "$prefix"
+# Capture pdftoppm's exit code and stderr separately so an out-of-range
+# page or encrypted PDF surfaces as an env error with a clear hint
+# rather than just the bare poppler diagnostic.
+pdftoppm_err="$(mktemp)"
+trap 'rm -rf "$tmpdir"; rm -f "${pdftotext_err:-}" "${pdftoppm_err:-}"' EXIT
+if ! pdftoppm \
+        -png \
+        -f "$PAGE" -l "$PAGE" \
+        -r "$DPI" \
+        -scale-to-x "$WIDTH" \
+        -scale-to-y -1 \
+        "$PDF" "$prefix" 2>"$pdftoppm_err"; then
+    err_msg="$(cat "$pdftoppm_err")"
+    hint "page $PAGE may be out of range, or the PDF may be encrypted/corrupt"
+    [[ -n "$err_msg" ]] && hint "pdftoppm said: $err_msg"
+    die 2 "pdftoppm failed for page $PAGE of $PDF"
+fi
 
 # Glob for the produced file. There must be exactly one.
 shopt -s nullglob
 produced=( "$prefix"-*.png )
 shopt -u nullglob
 if [[ ${#produced[@]} -ne 1 ]]; then
+    hint "this is unexpected — please report it with the PDF page count and the page number you passed"
     die 2 "pdftoppm wrote ${#produced[@]} files, expected 1 (page $PAGE)"
 fi
 
