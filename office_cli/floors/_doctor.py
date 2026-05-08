@@ -287,7 +287,7 @@ def _renumber_rooms_keep_all(
 def _default_cluster_letter(floor: Floor) -> str:
     """First declared cluster letter, or 'T' if none."""
     if floor.clusters:
-        return sorted(floor.clusters.keys())[0]
+        return min(floor.clusters.keys())
     return "T"
 
 
