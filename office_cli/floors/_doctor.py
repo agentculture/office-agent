@@ -27,6 +27,14 @@ _VIEW_H = 1080
 _DEDUP_PX = 6.0  # bounding-box centers within this distance treated as duplicates
 _ROW_TOL = 30.0  # y-pixel grouping tolerance for row-major spatial sort
 
+# Register the SVG namespace as the default so writes emit
+# <svg xmlns="..."> instead of <ns0:svg xmlns:ns0="...">. Browsers
+# reject the prefixed-root form as "not a valid SVG document"
+# even though the XML itself is well-formed (xmllint accepts it).
+# Sonar will flag the http URI as a low-severity hotspot (S5332);
+# this is a W3C namespace identifier, not a fetched URL.
+ET.register_namespace("", "http://www.w3.org/2000/svg")
+
 
 @dataclass(frozen=True)
 class DoctorReport:
