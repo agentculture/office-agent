@@ -1058,3 +1058,89 @@ def test_floors_new_no_floor_id_no_manifest(
     assert rc != 0
     err = capsys.readouterr().err
     assert "floor id" in err or "manifest" in err
+
+
+def test_floors_new_manifest_handles_yaml_nulls(
+    data_dir: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Qodo PR #58: YAML nulls (`copy_from: null`, `office: null`) must
+    be treated as unset, not coerced to the literal string "None"."""
+    from office_cli.floors import _scaffold as scaffold_mod
+
+    monkeypatch.setattr(scaffold_mod, "_render_pdf_page", lambda *a, **kw: b"\x89PNG")
+    pdf = data_dir / "fake.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    manifest = data_dir / "boot.yaml"
+    # Explicit YAML nulls — copy_from null at top, office null at top.
+    manifest.write_text(
+        f"pdf: {pdf}\n"
+        "copy_from: null\n"
+        "office: null\n"
+        "floors:\n"
+        "  - { id: tlv-floor-2, page: 7, copy_from: null }\n",
+        encoding="utf-8",
+    )
+    rc = main(
+        [
+            "floors",
+            "new",
+            "--manifest",
+            str(manifest),
+            "--data-dir",
+            str(data_dir),
+            "--json",
+        ]
+    )
+    # Should succeed: no copy_from means use the placeholder T:1 cluster.
+    # No office means single-office auto-detect (tlv).
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["results"][0]["ok"] is True
+    assert payload["results"][0]["office"] == "tlv"
+
+
+def test_floors_new_manifest_isolates_unexpected_exceptions(
+    data_dir: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Qodo PR #58: a non-OfficeError exception (e.g. OSError) in one
+    entry must not abort the batch. Other entries continue; the
+    failure is captured per-entry."""
+    from office_cli.floors import _scaffold as scaffold_mod
+
+    pdf = data_dir / "fake.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+
+    call_count = {"n": 0}
+
+    def fake_render(*a, **kw):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return b"\x89PNG"
+        raise OSError("simulated disk error")
+
+    monkeypatch.setattr(scaffold_mod, "_render_pdf_page", fake_render)
+    manifest = data_dir / "boot.yaml"
+    manifest.write_text(
+        f"pdf: {pdf}\n"
+        "floors:\n"
+        "  - { id: tlv-floor-2, page: 7 }\n"
+        "  - { id: tlv-floor-3, page: 8 }\n",
+        encoding="utf-8",
+    )
+    rc = main(
+        [
+            "floors",
+            "new",
+            "--manifest",
+            str(manifest),
+            "--data-dir",
+            str(data_dir),
+            "--json",
+        ]
+    )
+    assert rc != 0
+    payload = json.loads(capsys.readouterr().out)
+    by_id = {r["floor"]: r for r in payload["results"]}
+    assert by_id["tlv-floor-2"]["ok"] is True
+    assert by_id["tlv-floor-3"]["ok"] is False
+    assert "OSError" in by_id["tlv-floor-3"]["error"]

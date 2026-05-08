@@ -23,6 +23,7 @@ from office_cli.offices import Floor, append_floor_entry, load_offices
 
 _HELP_JSON = "Emit structured JSON."
 _DOCTOR_HINT_THRESHOLD = 3
+_BOOTSTRAP_HINT = "see data/floor-bootstrap.yaml.example"
 
 
 def cmd_list(args: argparse.Namespace) -> int:
@@ -272,7 +273,7 @@ def _scaffold_jobs_from_manifest(
         raise OfficeError(
             code=EXIT_USER_ERROR,
             message=f"manifest must declare a non-empty `floors:` list: {manifest_path}",
-            remediation="see data/floor-bootstrap.yaml.example",
+            remediation=_BOOTSTRAP_HINT,
         )
     _ = data_dir  # currently unused; reserved for relative resolution
     return [_manifest_floor_entry(entry, idx, pdf_path) for idx, entry in enumerate(floors)]
@@ -286,7 +287,7 @@ def _load_manifest(manifest_path: Path) -> dict:
         raise OfficeError(
             code=EXIT_USER_ERROR,
             message=f"manifest not found: {manifest_path}",
-            remediation="check the --manifest path; see data/floor-bootstrap.yaml.example",
+            remediation=f"check the --manifest path; {_BOOTSTRAP_HINT}",
         )
     try:
         raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
@@ -294,20 +295,20 @@ def _load_manifest(manifest_path: Path) -> dict:
         raise OfficeError(
             code=EXIT_USER_ERROR,
             message=f"manifest is not valid YAML: {manifest_path}: {err}",
-            remediation="see data/floor-bootstrap.yaml.example for the expected shape",
+            remediation=f"{_BOOTSTRAP_HINT} for the expected shape",
         ) from err
     if not isinstance(raw, dict):
         raise OfficeError(
             code=EXIT_USER_ERROR,
             message=f"manifest must be a mapping at top-level: {manifest_path}",
-            remediation="see data/floor-bootstrap.yaml.example",
+            remediation=_BOOTSTRAP_HINT,
         )
     return raw
 
 
 def _manifest_pdf_path(raw: dict, manifest_path: Path) -> Path:
     """Pull `pdf:` out of the manifest, resolving relative against the manifest dir."""
-    pdf_field = str(raw.get("pdf", "")).strip()
+    pdf_field = _yaml_str(raw.get("pdf"))
     if not pdf_field:
         raise OfficeError(
             code=EXIT_USER_ERROR,
@@ -328,7 +329,7 @@ def _manifest_floor_entry(entry: object, idx: int, pdf_path: Path) -> tuple[str,
             message=f"manifest floors[{idx}] is not a mapping",
             remediation="each entry needs `id:` and `page:`",
         )
-    fid = str(entry.get("id", "")).strip()
+    fid = _yaml_str(entry.get("id"))
     if not fid:
         raise OfficeError(
             code=EXIT_USER_ERROR,
@@ -516,6 +517,21 @@ def _run_new_batch(args: argparse.Namespace, data_dir: Path) -> int:
                     "remediation": err.remediation,
                 }
             )
+        except Exception as err:  # noqa: BLE001 — Qodo PR #58: keep per-entry isolation
+            # Catch unexpected errors (OSError on write, ET.ParseError on
+            # corrupt PDF, KeyError from a malformed manifest field, etc.)
+            # so a single bad entry doesn't terminate the whole batch
+            # with a traceback.
+            any_failed = True
+            results.append(
+                {
+                    "floor": job["floor_id"],
+                    "office": job["office_id"],
+                    "ok": False,
+                    "error": f"{type(err).__name__}: {err}",
+                    "remediation": "(unexpected error — see traceback in stderr if needed)",
+                }
+            )
             # Re-fetch offices.yaml for the next iteration so duplicate-id
             # checks see entries we successfully appended above.
             # (load_offices is called inside _run_one_new -> implicit reload.)
@@ -572,15 +588,13 @@ def _new_jobs_from_manifest(args: argparse.Namespace, data_dir: Path) -> list[di
     offices = load_offices(data_dir)
     floor_index = _index_floors(offices)
     office_id = _resolve_manifest_office(args, raw, offices)
-    default_copy_from = (
-        getattr(args, "copy_from", None) or str(raw.get("copy_from", "")).strip() or None
-    )
+    default_copy_from = getattr(args, "copy_from", None) or _yaml_str(raw.get("copy_from")) or None
     floors = raw.get("floors") or []
     if not isinstance(floors, list) or not floors:
         raise OfficeError(
             code=EXIT_USER_ERROR,
             message=f"manifest must declare a non-empty `floors:` list: {manifest_path}",
-            remediation="see data/floor-bootstrap.yaml.example",
+            remediation=_BOOTSTRAP_HINT,
         )
     return [
         _build_new_job(entry, idx, pdf_path, office_id, default_copy_from, floor_index, data_dir)
@@ -611,7 +625,7 @@ def _build_new_job(
             message=f"manifest floors[{idx}] is not a mapping",
             remediation="each entry needs `id:` and `page:`",
         )
-    fid = str(entry.get("id", "")).strip()
+    fid = _yaml_str(entry.get("id"))
     if not fid:
         raise OfficeError(
             code=EXIT_USER_ERROR,
@@ -625,7 +639,8 @@ def _build_new_job(
             message=f"manifest floors[{idx}] (id={fid!r}) is missing `page:`",
             remediation="add `page: <N>` or `page: '<label>'`",
         )
-    src_id = str(entry.get("copy_from", default_copy_from or "")).strip() or None
+    per_entry_src = _yaml_str(entry.get("copy_from")) if "copy_from" in entry else ""
+    src_id = per_entry_src or default_copy_from or None
     return {
         "data_dir": data_dir,
         "office_id": office_id,
@@ -647,7 +662,7 @@ def _resolve_manifest_office(args: argparse.Namespace, raw: dict, offices: dict)
                 remediation=f"known offices: {known or '(none)'}",
             )
         return args.office
-    yaml_office = str(raw.get("office", "")).strip()
+    yaml_office = _yaml_str(raw.get("office"))
     if yaml_office:
         if yaml_office not in offices:
             known = ", ".join(sorted(offices.keys()))
@@ -882,6 +897,21 @@ def _require_page(args: argparse.Namespace) -> int | str:
             remediation="pass --page <N> (1-based) or --page <label>",
         )
     return _coerce_page(args.page)
+
+
+def _yaml_str(value: object) -> str:
+    """Coerce a YAML-loaded value to a stripped string.
+
+    Critical detail: YAML's ``null`` (or a missing key with a ``None``
+    fallback) loads as Python ``None`` — and ``str(None) == 'None'``,
+    which is truthy. Without this helper, ``copy_from: null`` /
+    ``office: null`` / ``pdf: null`` would each silently become the
+    literal string ``"None"`` and produce confusing downstream errors
+    ("unknown office: 'None'" rather than "missing field"). Qodo PR #58.
+    """
+    if value is None:
+        return ""
+    return str(value).strip()
 
 
 def _retarget_room_id(rid: str, dst_floor_num: str) -> str:
