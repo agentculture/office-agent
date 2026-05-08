@@ -27,6 +27,25 @@ Pick `File → Document Properties` to set the page; pick
 `File → Import` and choose **Embed** (not Link) when adding the
 architect's plan.
 
+If the source plan is a multi-page PDF (e.g. an architect's pack
+covering several floors), don't import the PDF directly — Inkscape's
+PDF-as-vector import produces ~100k vector elements that break the
+Plain SVG export. Convert the relevant page to a raster PNG first
+using the `process-pdf` skill, then import the PNG with **Embed**:
+
+```bash
+bash .claude/skills/process-pdf/scripts/pdf-to-png.sh \
+    ~/Downloads/plans.pdf "Fifth Floor" /tmp/floor5.png
+# Or by 1-based page number:
+bash .claude/skills/process-pdf/scripts/pdf-to-png.sh \
+    ~/Downloads/plans.pdf 7 /tmp/floor5.png
+```
+
+The skill produces a 1920-wide PNG that drops straight into the
+`background` layer. See `.claude/skills/process-pdf/SKILL.md` for
+the full surface (it requires `poppler`; the skill prints a clear
+install hint if missing).
+
 ## The ID contract
 
 Every shape the agent cares about has both an `id` and a `class`.

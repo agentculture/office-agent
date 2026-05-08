@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.2] - 2026-05-08
+
+### Added
+
+- `.claude/skills/process-pdf` skill: `pdf-to-png.sh` extracts a single page from a multi-page PDF as a 1920-wide PNG suitable for the floor-map tracing background. Pages can be selected by 1-based number or by text label (`pdftotext` search). Requires `poppler` (`pdftoppm` + `pdftotext`); the skill never installs anything itself. Documented in SKILL.md and cross-linked from `docs/tracing-guide.md`. Replaces the manual `sips`+page-extraction dance that was inline in the trace flow.
+- `.env.example` documents the `OFFICE_DRIVE_*` env vars introduced in #44 so operators have one place to copy from.
+
 ## [0.10.1] - 2026-05-07
 
 ### Added
