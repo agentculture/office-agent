@@ -220,6 +220,25 @@ Fix-and-rerun until clean. That's the dev loop.
 | Background is fine on your laptop, broken everywhere else              | The image is linked, not embedded. Re-import with the **Embed** option.               |
 | Architect's room id is `5/18` or `Room 18`                             | The validator requires `<floor>.<NN>` (e.g. `5.18`). Normalize the id in both the SVG and `data/offices.yaml`. |
 | Two desks have the same id                                             | Probably a `Ctrl+D` you forgot to renumber. The validator points at both.             |
+| Validator dumps dozens of `5-T-06-7-4-...` errors                      | Inkscape `Ctrl+D` cascade. Run `office floors doctor floors/<floor>.svg` to drop off-page / duplicate shapes and renumber survivors per `offices.yaml`. |
+
+## When a Ctrl+D cascade has gotten out of hand
+
+If you've been duplicating seats and the file has spiralled into ids
+like `5-T-06-7-4-0-8` plus a pile of off-page shapes, the
+diagnose-and-fix verb cleans up:
+
+```bash
+office floors doctor floors/tlv-floor-5.svg          # writes back in place
+office floors doctor floors/tlv-floor-5.svg --dry-run  # preview only
+office floors doctor --all                            # every declared floor
+```
+
+Doctor drops elements outside the 1920×1080 viewBox, deduplicates
+near-overlapping shapes, then renumbers survivors per the cluster
+spec in `offices.yaml`. Existing valid ids (`5-T-01` etc.) are left
+alone — only garbled ones get reassigned. See `office explain
+floors doctor` for the full algorithm.
 
 ## End-to-end checklist
 
