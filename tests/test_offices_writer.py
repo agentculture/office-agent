@@ -201,3 +201,36 @@ def test_append_drops_into_empty_floors_list(tmp_path: Path) -> None:
     )
     offices = load_offices(tmp_path)
     assert "tlv-floor-1" in offices["tlv"].floors
+
+
+def test_append_matches_existing_indentation(tmp_path: Path) -> None:
+    """Qodo PR #57 review: writer must use the file's existing list-item
+    indentation, not a hardcoded 6 spaces."""
+    yaml_path = tmp_path / "data" / "offices.yaml"
+    yaml_path.parent.mkdir(parents=True)
+    # 2-space-deeper indentation (8 spaces for floor items).
+    yaml_path.write_text(
+        "offices:\n"
+        "    - id: tlv\n"
+        '      name: "Tel Aviv"\n'
+        "      floors:\n"
+        "        - id: tlv-floor-5\n"
+        "          svg: floors/tlv-floor-5.svg\n"
+        "          status: active\n"
+        "          clusters:\n"
+        "            T: { capacity: 1, type: open-space }\n"
+        "          rooms: {}\n",
+        encoding="utf-8",
+    )
+    append_floor_entry(
+        yaml_path,
+        "tlv",
+        {"id": "tlv-floor-3", "svg": "floors/tlv-floor-3.svg"},
+    )
+    text = yaml_path.read_text(encoding="utf-8")
+    # The new entry's `- id:` line must have the same 8-space prefix as
+    # the existing one.
+    assert "        - id: tlv-floor-3" in text
+    # And load_offices must still succeed (well-formed YAML).
+    offices = load_offices(tmp_path)
+    assert "tlv-floor-3" in offices["tlv"].floors

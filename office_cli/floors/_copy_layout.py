@@ -101,10 +101,10 @@ def copy_layout(
 
     dst_tree = _parse(dst_path)
     dst_root = dst_tree.getroot()
-    _strip_existing_layout(dst_root)
+    seats_parent, rooms_parent = _strip_existing_layout(dst_root)
 
-    new_seats = _clone_into(src_seats, dst_root)
-    new_rooms = _clone_into(src_rooms, dst_root)
+    new_seats = _clone_into(src_seats, seats_parent or dst_root)
+    new_rooms = _clone_into(src_rooms, rooms_parent or dst_root)
 
     parents = {child: parent for parent in dst_root.iter() for child in parent}
     seat_slots = _seat_ids_for(dst_floor.number, dst_floor.clusters)
@@ -194,25 +194,36 @@ def _ensure_dst_writable(dst_floor: Floor, overwrite: bool) -> None:
 # -- tree manipulation ------------------------------------------------------
 
 
-def _strip_existing_layout(root: ET.Element) -> None:
-    """Remove every seat/room from the dst root.
+def _strip_existing_layout(
+    root: ET.Element,
+) -> tuple[ET.Element | None, ET.Element | None]:
+    """Remove every seat/room from the dst root; return their original parents.
 
     Preserves ``<image>``, layer groups, and anything else (so the
-    embedded background and the viewBox stay intact).
+    embedded background and the viewBox stay intact). Returns the
+    parent element of the first seat and first room respectively, so
+    callers can re-parent the copied shapes into the same Inkscape
+    ``<g id="seats">`` / ``<g id="rooms">`` group rather than
+    flattening everything to the SVG root. Qodo PR #57.
     """
     parents = {child: parent for parent in root.iter() for child in parent}
-    for el in _select(root, "rect", "seat") + _select(root, "polygon", "room"):
+    seats = _select(root, "rect", "seat")
+    rooms = _select(root, "polygon", "room")
+    seats_parent = parents.get(seats[0]) if seats else None
+    rooms_parent = parents.get(rooms[0]) if rooms else None
+    for el in seats + rooms:
         parent = parents.get(el)
         if parent is not None:
             parent.remove(el)
+    return seats_parent, rooms_parent
 
 
-def _clone_into(elements: list[ET.Element], dst_root: ET.Element) -> list[ET.Element]:
-    """Deep-copy ``elements`` into ``dst_root``; return the new copies."""
+def _clone_into(elements: list[ET.Element], target: ET.Element) -> list[ET.Element]:
+    """Deep-copy ``elements`` into ``target``; return the new copies."""
     out: list[ET.Element] = []
     for el in elements:
         new_el = _copy.deepcopy(el)
-        dst_root.append(new_el)
+        target.append(new_el)
         out.append(new_el)
     return out
 

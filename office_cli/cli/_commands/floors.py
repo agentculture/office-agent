@@ -461,37 +461,77 @@ def cmd_new(args: argparse.Namespace) -> int:
     pdf_path = _require_pdf(args)
     page = _coerce_page(args.page) if args.page else _require_page(args)
 
+    # Atomic flow (Qodo PR #57 review): scaffold + copy + validate
+    # all happen BEFORE we touch offices.yaml. If anything fails, the
+    # only side-effect is a partial SVG at dst_path (rolled back below);
+    # the YAML stays untouched so a fresh `floors new` works.
     new_entry = _build_floor_entry(floor_id, src_floor)
-    yaml_path = data_dir / "data" / "offices.yaml"
-    append_floor_entry(yaml_path, office_id, new_entry)
-
-    # Reload to get a Floor object pointing at the on-disk path.
-    offices_after = load_offices(data_dir)
-    dst_floor = offices_after[office_id].floors[floor_id]
-    dst_path = dst_floor.svg
-    dst_path.parent.mkdir(parents=True, exist_ok=True)
-    svg_bytes = scaffold_svg(floor=dst_floor, pdf=pdf_path, page=page)
-    dst_path.write_bytes(svg_bytes)
-    actions = [f"appended {floor_id} under office {office_id}", "scaffolded SVG"]
-
-    if src_floor is not None and src_path is not None:
-        copy_layout(
-            src_path=src_path,
-            src_floor=src_floor,
-            dst_path=dst_path,
-            dst_floor=dst_floor,
+    dst_path = data_dir / new_entry["svg"]
+    if dst_path.exists():
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"refusing to overwrite existing SVG: {dst_path}",
+            remediation=(
+                "delete the file first, or pick a different floor id "
+                "(refusing to silently overwrite operator state)"
+            ),
         )
-        actions.append(f"copied layout from {src_floor.id}")
+    synthetic_floor = Floor(
+        id=floor_id,
+        svg=dst_path,
+        clusters=_synth_clusters(new_entry["clusters"]),
+        rooms=_synth_rooms(new_entry["rooms"]),
+        status="draft",
+    )
+    actions = ["scaffolded SVG"]
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        svg_bytes = scaffold_svg(floor=synthetic_floor, pdf=pdf_path, page=page)
+        dst_path.write_bytes(svg_bytes)
+        if src_floor is not None and src_path is not None:
+            copy_layout(
+                src_path=src_path,
+                src_floor=src_floor,
+                dst_path=dst_path,
+                dst_floor=synthetic_floor,
+            )
+            actions.append(f"copied layout from {src_floor.id}")
+        issues = validate_floor(parse_svg(dst_path), synthetic_floor)
+    except Exception:
+        # Roll back the partial SVG so a re-run isn't blocked on
+        # stale-file detection.
+        if dst_path.exists():
+            dst_path.unlink()
+        raise
 
-    issues = validate_floor(parse_svg(dst_path), dst_floor)
     errors = [i for i in issues if i.severity is Severity.ERROR]
     warnings = [i for i in issues if i.severity is Severity.WARNING]
+    if errors:
+        # Validation failed — roll back the SVG and refuse to write the
+        # YAML entry. Operator fixes the underlying issue and re-runs.
+        dst_path.unlink()
+        for err in errors:
+            emit_diagnostic(f"  error [{err.rule}]: {err.message}")
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=(
+                f"generated SVG for {floor_id!r} has {len(errors)} validation "
+                "error(s); rolled back, no YAML written"
+            ),
+            remediation="fix the source layout (or pick a different page) and re-run",
+        )
+
+    # Only commit YAML now that we have a clean, validated SVG on disk.
+    yaml_path = data_dir / "data" / "offices.yaml"
+    append_floor_entry(yaml_path, office_id, new_entry)
+    actions.append(f"appended {floor_id} under office {office_id}")
+
     payload = {
         "office": office_id,
         "floor": floor_id,
         "svg": str(dst_path),
         "actions": actions,
-        "errors": [i.to_dict() for i in errors],
+        "errors": [],
         "warnings": [i.to_dict() for i in warnings],
     }
     if args.json:
@@ -502,13 +542,44 @@ def cmd_new(args: argparse.Namespace) -> int:
             emit_diagnostic(f"  {action}")
         for warn in warnings:
             emit_diagnostic(f"  warn  [{warn.rule}]: {warn.message}")
-        for err in errors:
-            emit_diagnostic(f"  error [{err.rule}]: {err.message}")
         emit_diagnostic(
             "  next: trace seats in Inkscape, then `office floors doctor "
             f"{floor_id}`, then upload to Drive."
         )
     return 0
+
+
+def _synth_clusters(spec: object) -> dict:
+    """Materialize the dict-of-Cluster used by `Floor` from a YAML-shape spec."""
+    from office_cli.offices._models import Cluster
+
+    out: dict = {}
+    if isinstance(spec, dict):
+        for letter, sub in spec.items():
+            if isinstance(sub, dict):
+                out[letter] = Cluster(
+                    letter=letter,
+                    capacity=int(sub.get("capacity", 1)),
+                    type=str(sub.get("type", "open-space")),
+                )
+    return out
+
+
+def _synth_rooms(spec: object) -> dict:
+    """Materialize the dict-of-Room used by `Floor` from a YAML-shape spec."""
+    from office_cli.offices._models import Room
+
+    out: dict = {}
+    if isinstance(spec, dict):
+        for rid, sub in spec.items():
+            if isinstance(sub, dict):
+                out[rid] = Room(
+                    id=rid,
+                    name=str(sub.get("name", rid)),
+                    type=str(sub.get("type", "meeting")),
+                    capacity=int(sub.get("capacity", 0)),
+                )
+    return out
 
 
 def _resolve_new_office(args: argparse.Namespace, offices: dict) -> str:

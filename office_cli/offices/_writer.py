@@ -22,7 +22,7 @@ import yaml
 
 from office_cli.cli._errors import EXIT_USER_ERROR, OfficeError
 
-_INDENT = "      "  # 6 spaces — list items under offices[].floors
+_DEFAULT_INDENT = "      "  # 6 spaces — list items under offices[].floors
 
 
 def append_floor_entry(
@@ -73,9 +73,10 @@ def append_floor_entry(
     _ensure_floor_id_unique(office, fid, office_id)
 
     # Locate the matching `- id: <office_id>` block and the end of its
-    # `floors:` child list in the source text.
-    insertion_point = _find_insertion_point(text, office_id, yaml_path)
-    new_block = _format_floor_block(floor)
+    # `floors:` child list in the source text. The item indent is
+    # discovered from the file (Qodo PR #57: don't hardcode 6 spaces).
+    insertion_point, item_indent = _find_insertion_point(text, office_id, yaml_path)
+    new_block = _format_floor_block(floor, item_indent=item_indent)
     new_text = text[:insertion_point] + new_block + text[insertion_point:]
     yaml_path.write_text(new_text, encoding="utf-8")
 
@@ -127,27 +128,24 @@ def _ensure_floor_id_unique(office: dict, floor_id: str, office_id: str) -> None
             )
 
 
-def _find_insertion_point(text: str, office_id: str, path: Path) -> int:
-    """Return the byte offset in ``text`` where the new floor entry goes.
+def _find_insertion_point(text: str, office_id: str, path: Path) -> tuple[int, str]:
+    """Return ``(byte_offset, item_indent)`` for the new floor entry.
 
     Walks the source line-by-line:
 
     1. Find ``- id: <office_id>`` (start of the matching office block).
     2. Inside that block, find ``floors:``.
-    3. Scan forward to the last child entry of that floors list (lines
-       starting with the expected indent ``      - ``).
-    4. Insert at the end of that last entry.
-
-    Errors with a clear remediation if the file's indentation doesn't
-    match — let the operator hand-edit rather than guess.
+    3. Scan forward to the last child entry of that floors list.
+    4. Insert at the end of that last entry, and report the indent
+       used by existing list items so the caller can match it.
     """
     lines = text.splitlines(keepends=True)
     office_line, office_indent = _locate_office_block(lines, office_id, path)
     floors_line, floors_indent = _locate_floors_key(
         lines, office_line, office_indent, office_id, path
     )
-    expected_item_prefix = " " * (floors_indent + 2) + "- "
-    return _scan_to_block_end(lines, floors_line, expected_item_prefix)
+    item_indent = " " * (floors_indent + 2)
+    return _scan_to_block_end(lines, floors_line, item_indent + "- "), item_indent
 
 
 def _locate_office_block(lines: list[str], office_id: str, path: Path) -> tuple[int, int]:
@@ -220,41 +218,55 @@ def _line_belongs_to_block(line: str, item_prefix: str) -> bool:
     return False
 
 
-def _format_floor_block(floor: Mapping[str, object]) -> str:
-    """Render a floor mapping as a `      - id: ...\\n        ...` YAML block."""
+def _format_floor_block(floor: Mapping[str, object], item_indent: str = _DEFAULT_INDENT) -> str:
+    """Render a floor mapping as a YAML block matching the file's indent.
+
+    ``item_indent`` is the prefix for the leading ``- id:`` line; nested
+    keys get two additional spaces. Qodo PR #57: don't hardcode the
+    6-space convention — match whatever the existing `floors:` list uses.
+    """
     fid = str(floor["id"]).strip()
     svg = str(floor.get("svg", f"floors/{fid}.svg")).strip()
     status = str(floor.get("status", "draft")).strip()
-    out = [
-        f"{_INDENT}- id: {fid}\n",
-        f"{_INDENT}  svg: {svg}\n",
-        f"{_INDENT}  status: {status}\n",
+    nested = item_indent + "  "
+    parts = [
+        f"{item_indent}- id: {fid}\n",
+        f"{nested}svg: {svg}\n",
+        f"{nested}status: {status}\n",
     ]
-    clusters = floor.get("clusters")
-    if isinstance(clusters, dict) and clusters:
-        out.append(f"{_INDENT}  clusters:\n")
-        for letter in sorted(clusters.keys()):
-            spec = clusters[letter]
-            if isinstance(spec, dict):
-                cap = int(spec.get("capacity", 1))
-                ctype = str(spec.get("type", "open-space"))
-                out.append(f"{_INDENT}    {letter}: {{ capacity: {cap}, type: {ctype} }}\n")
-    else:
-        out.append(f"{_INDENT}  clusters:\n")
-        out.append(f"{_INDENT}    T: {{ capacity: 1, type: open-space }}\n")
-    rooms = floor.get("rooms")
-    if isinstance(rooms, dict) and rooms:
-        out.append(f"{_INDENT}  rooms:\n")
-        for room_id in sorted(rooms.keys()):
-            spec = rooms[room_id]
-            if isinstance(spec, dict):
-                name = str(spec.get("name", room_id))
-                rtype = str(spec.get("type", "meeting"))
-                cap = int(spec.get("capacity", 0))
-                out.append(
-                    f'{_INDENT}    "{room_id}": '
-                    f'{{ name: "{name}", type: {rtype}, capacity: {cap} }}\n'
-                )
-    else:
-        out.append(f"{_INDENT}  rooms: {{}}\n")
+    parts.append(_format_clusters_block(floor.get("clusters"), nested))
+    parts.append(_format_rooms_block(floor.get("rooms"), nested))
+    return "".join(parts)
+
+
+def _format_clusters_block(spec: object, nested: str) -> str:
+    """Render the ``clusters:`` sub-block with one line per cluster."""
+    inner = nested + "  "
+    if not (isinstance(spec, dict) and spec):
+        return f"{nested}clusters:\n{inner}T: {{ capacity: 1, type: open-space }}\n"
+    out = [f"{nested}clusters:\n"]
+    for letter in sorted(spec.keys()):
+        sub = spec[letter]
+        if isinstance(sub, dict):
+            cap = int(sub.get("capacity", 1))
+            ctype = str(sub.get("type", "open-space"))
+            out.append(f"{inner}{letter}: {{ capacity: {cap}, type: {ctype} }}\n")
+    return "".join(out)
+
+
+def _format_rooms_block(spec: object, nested: str) -> str:
+    """Render the ``rooms:`` sub-block; empty dict if no rooms declared."""
+    inner = nested + "  "
+    if not (isinstance(spec, dict) and spec):
+        return f"{nested}rooms: {{}}\n"
+    out = [f"{nested}rooms:\n"]
+    for room_id in sorted(spec.keys()):
+        sub = spec[room_id]
+        if isinstance(sub, dict):
+            name = str(sub.get("name", room_id))
+            rtype = str(sub.get("type", "meeting"))
+            cap = int(sub.get("capacity", 0))
+            out.append(
+                f'{inner}"{room_id}": ' f'{{ name: "{name}", type: {rtype}, capacity: {cap} }}\n'
+            )
     return "".join(out)
