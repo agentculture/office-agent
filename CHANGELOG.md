@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.3] - 2026-05-08
+
+### Added
+
+- `office floors refresh` verb. Removes the local Drive hydrator cache (`~/.cache/office-cli/drive`, or `$OFFICE_DRIVE_CACHE_DIR`) so the next `OFFICE_DRIVE_ROOT`-backed command re-downloads from scratch. Replaces the `rm -rf` workaround operators were running between Drive uploads. Idempotent. Issue #54.
+- `docs/floor-runbook.md`: single-page operator runbook covering the full PDF → trace → doctor → validate → upload → render loop. Cross-links to the deeper guides.
+- CLAUDE.md: SonarCloud guidance section documenting the S5332 false positive on the SVG namespace URI in `_doctor.py`. Future contributors must not "fix" it by removing `ET.register_namespace`. Issue #54.
+- `docs/floors-from-drive.md`: Workspace ACL gotcha (folder share doesn't propagate to files uploaded by another account in some corp Workspaces) plus an explicit iteration-workflow section documenting `OFFICE_DRIVE_TTL_SECONDS=0` and `office floors refresh`.
+
+### Changed
+
+- `office floors validate` text and JSON output now emit a `doctor_hint` when ≥3 `seat-id-format` errors share a `<floor>-<cluster>-` prefix — the typical Inkscape Ctrl+D cascade pattern. The hint suggests `office floors doctor <id>` so operators don't have to discover the verb on their own. Issue #54.
+- `office floors doctor` writes pretty-printed SVG (one element per line, indented) so floor SVGs in the repo produce a reviewable `git diff`. Behavior is unchanged for any clean file (no actions ⇒ no rewrite). Issue #54.
+- `office_cli/drive/_hydrate.py`: when an `offices.yaml`-declared office folder lists empty, the hydrator now emits a diagnostic pointing at the Workspace ACL gotcha before the missing-SVG error fires. Issue #54.
+
+### Fixed
+
 ## [0.11.2] - 2026-05-08
 
 ### Fixed

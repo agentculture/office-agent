@@ -364,6 +364,28 @@ offices:
     assert "tlv" in exc.value.message
 
 
+def test_empty_office_folder_emits_acl_hint(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Issue #54: corp Workspaces sometimes don't propagate folder
+    share ACLs to per-file uploads. Drive returns [] (not 403). The
+    hydrator must surface a hint pointing at the ACL gotcha before
+    the missing-SVG error fires."""
+    fake = _build_fake()
+    fake.folders["tlv-folder"] = []  # SA can see folder, not contents
+    with pytest.raises(OfficeError):
+        hydrate_data_dir(
+            _ROOT_ID,
+            credentials_path=tmp_path / "unused.json",
+            cache_root=tmp_path / "cache",
+            client=fake,
+        )
+    err = capsys.readouterr().err
+    assert "lists empty" in err
+    assert "Tel Aviv (tlv)" in err
+    assert "service account" in err.lower()
+
+
 def test_office_missing_id_raises(tmp_path: Path) -> None:
     bad_yaml = b"offices:\n  - name: nameless\n"
     fake = _build_fake(yaml_bytes=bad_yaml)

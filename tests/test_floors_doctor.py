@@ -205,6 +205,24 @@ def test_doctor_writes_browser_compatible_svg_root(data_dir: Path) -> None:
     assert 'xmlns="http://www.w3.org/2000/svg"' in written
 
 
+def test_doctor_pretty_prints_output(data_dir: Path) -> None:
+    """Issue #54: doctor's output must be human-readable in `git diff`,
+    not a single minified line. The result has at least one newline
+    between elements, while still keeping the bare `<svg ` root."""
+    svg_path = data_dir / "floors" / "tlv-floor-5.svg"
+    svg_path.write_text(_polluted_svg(), encoding="utf-8")
+
+    doctor_svg(svg_path, _floor(data_dir))
+
+    written = svg_path.read_text(encoding="utf-8")
+    # More than just the XML decl + one giant element — needs internal
+    # newlines so the file diffs cleanly.
+    assert written.count("\n") > 5
+    # Root must still be the default-namespaced bare <svg> form.
+    assert "<svg " in written
+    assert "<ns0:svg" not in written
+
+
 def test_doctor_polygon_with_malformed_points_does_not_crash(
     data_dir: Path,
 ) -> None:

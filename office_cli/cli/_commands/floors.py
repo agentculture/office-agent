@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import shutil
+from collections import Counter
 from pathlib import Path
 
-from office_cli._config import add_data_dir_arg, resolve_data_dir
+from office_cli._config import add_data_dir_arg, drive_cache_root, resolve_data_dir
 from office_cli.cli._errors import EXIT_USER_ERROR, OfficeError
 from office_cli.cli._output import emit_diagnostic, emit_result
 from office_cli.floors import Severity, doctor_svg, parse_svg, validate_floor
 from office_cli.offices import Floor, load_offices
 
 _HELP_JSON = "Emit structured JSON."
+_DOCTOR_HINT_THRESHOLD = 3
 
 
 def cmd_list(args: argparse.Namespace) -> int:
@@ -69,6 +72,86 @@ def cmd_validate(args: argparse.Namespace) -> int:
     else:
         _print_text(payload)
     return EXIT_USER_ERROR if error_count else 0
+
+
+def cmd_refresh(args: argparse.Namespace) -> int:
+    """Bust the Drive hydrator's local cache.
+
+    Removes ``OFFICE_DRIVE_CACHE_DIR`` (default
+    ``~/.cache/office-cli/drive``) so the next command that resolves
+    via ``OFFICE_DRIVE_ROOT`` re-downloads the Drive tree from
+    scratch. Issue #54: replaces the documented `rm -rf` workaround
+    operators were running between Drive uploads and validate.
+
+    Defends against a footgun: a typo in ``OFFICE_DRIVE_CACHE_DIR``
+    (e.g. ``/``) would otherwise let this verb wipe arbitrary trees.
+    The resolved path must contain ``office-cli`` as a literal
+    component, or the verb refuses with ``EXIT_USER_ERROR``.
+    """
+    cache_dir = drive_cache_root().resolve()
+    _ensure_safe_cache_path(cache_dir)
+    if not cache_dir.exists():
+        payload = {"cache_dir": str(cache_dir), "removed": False}
+        if args.json:
+            emit_result(payload, json_mode=True)
+        else:
+            emit_result(
+                f"nothing to refresh ({cache_dir} did not exist)",
+                json_mode=False,
+            )
+        return 0
+    try:
+        if cache_dir.is_dir() and not cache_dir.is_symlink():
+            shutil.rmtree(cache_dir)
+        else:
+            cache_dir.unlink()
+    except OSError as err:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"failed to remove Drive cache at {cache_dir}: {err}",
+            remediation=(
+                "check filesystem permissions on the cache dir, or remove it "
+                "manually with `rm -rf <path>` once the underlying issue is fixed"
+            ),
+        ) from err
+    if cache_dir.exists():
+        # rmtree returned without raising but something is still there
+        # (e.g. a concurrent process recreated the dir). Surface this
+        # so operators don't silently keep serving stale Drive data.
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"Drive cache at {cache_dir} still exists after refresh",
+            remediation="check for a concurrent process holding the cache; remove it manually",
+        )
+    payload = {"cache_dir": str(cache_dir), "removed": True}
+    if args.json:
+        emit_result(payload, json_mode=True)
+    else:
+        emit_result(f"refreshed {cache_dir}", json_mode=False)
+    return 0
+
+
+def _ensure_safe_cache_path(cache_dir: Path) -> None:
+    """Refuse to delete obviously-dangerous targets.
+
+    The cache dir must contain ``office-cli`` as a literal path
+    component. The default (``~/.cache/office-cli/drive``) and any
+    sensible ``OFFICE_DRIVE_CACHE_DIR`` override (e.g.
+    ``/tmp/test-office-cli/drive``) satisfy this — but ``/``,
+    ``$HOME``, ``~/.cache``, etc. do not.
+    """
+    if "office-cli" not in cache_dir.parts:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=(
+                f"refusing to delete {cache_dir}: path must contain 'office-cli' " "as a component"
+            ),
+            remediation=(
+                "unset OFFICE_DRIVE_CACHE_DIR (use the default "
+                "~/.cache/office-cli/drive) or set it to a path under an "
+                "office-cli-named directory"
+            ),
+        )
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -174,7 +257,55 @@ def _validate_one(target: Path, floor_index: dict[Path, Floor]) -> dict[str, obj
         "warnings": [i.to_dict() for i in warnings],
         "seat_count": len(svg.seat_ids),
         "room_count": len(svg.room_ids),
+        "doctor_hint": _doctor_hint(floor.id, errors),
     }
+
+
+def _doctor_hint(floor_id: str, errors: list) -> str:
+    """Return a non-empty hint when seat-id-format errors look like the
+    Inkscape Ctrl+D cascade pattern from issue #54.
+
+    The cascade produces ids like ``5-T-06-7-4-0-8`` — many seat ids
+    that share the ``<floor>-<cluster>-`` prefix but fail format. If
+    we see ≥3 such errors sharing a prefix, suggest ``office floors
+    doctor`` so the operator doesn't have to discover the verb on
+    their own.
+    """
+    prefixes: Counter = Counter()
+    for issue in errors:
+        if issue.rule != "seat-id-format":
+            continue
+        prefix = _shared_prefix_of(issue.message)
+        if prefix:
+            prefixes[prefix] += 1
+    if not prefixes:
+        return ""
+    top, count = prefixes.most_common(1)[0]
+    if count < _DOCTOR_HINT_THRESHOLD:
+        return ""
+    return (
+        f"{count} seat ids share prefix {top!r}; this looks like the "
+        f"Inkscape Ctrl+D cascade — try: office floors doctor {floor_id}"
+    )
+
+
+def _shared_prefix_of(message: str) -> str:
+    """Pull ``<floor>-<cluster>-`` from a ``seat-id-format`` message.
+
+    The validator emits messages like
+    ``seat id '5-T-06-7-4' does not match <floor>-<CLUSTER>-<NN>``.
+    We extract the id (between the first pair of single quotes) and
+    keep up to the second hyphen.
+    """
+    start = message.find("'")
+    end = message.find("'", start + 1) if start >= 0 else -1
+    if start < 0 or end <= start:
+        return ""
+    sid = message[start + 1 : end]
+    parts = sid.split("-")
+    if len(parts) < 3:
+        return ""
+    return f"{parts[0]}-{parts[1]}-"
 
 
 def _print_text(payload: list[dict[str, object]]) -> None:
@@ -189,6 +320,9 @@ def _print_text(payload: list[dict[str, object]]) -> None:
             emit_diagnostic(f"  error [{err['rule']}]: {err['message']}")
         for warn in item["warnings"]:  # type: ignore[union-attr]
             emit_diagnostic(f"  warn  [{warn['rule']}]: {warn['message']}")
+        hint = item.get("doctor_hint")
+        if hint:
+            emit_diagnostic(f"  hint: {hint}")
 
 
 def register(sub: argparse._SubParsersAction) -> None:
@@ -239,6 +373,18 @@ def register(sub: argparse._SubParsersAction) -> None:
     p_doc.add_argument("--json", action="store_true", help=_HELP_JSON)
     add_data_dir_arg(p_doc)
     p_doc.set_defaults(func=cmd_doctor)
+
+    p_ref = inner.add_parser(
+        "refresh",
+        help="Bust the local Drive hydrator cache.",
+        description=(
+            "Remove ~/.cache/office-cli/drive (or $OFFICE_DRIVE_CACHE_DIR) so "
+            "the next OFFICE_DRIVE_ROOT-backed command re-downloads the Drive "
+            "tree. Use after re-uploading an SVG when iterating with TTL > 0."
+        ),
+    )
+    p_ref.add_argument("--json", action="store_true", help=_HELP_JSON)
+    p_ref.set_defaults(func=cmd_refresh)
 
     p.set_defaults(func=lambda args: _missing_subcommand(p))
 

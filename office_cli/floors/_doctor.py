@@ -114,6 +114,9 @@ def doctor_svg(svg_path: Path, floor: Floor, *, dry_run: bool = False) -> Doctor
     warnings = _capacity_warnings(seats_after, len(seat_slots), rooms_after, len(room_slots))
 
     if not dry_run and actions:
+        # Pretty-print before write so floor SVGs in the repo produce a
+        # reviewable `git diff` instead of one giant minified line. Issue #54.
+        ET.indent(tree, space="  ")
         tree.write(svg_path, encoding="utf-8", xml_declaration=True)
 
     return DoctorReport(

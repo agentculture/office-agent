@@ -111,6 +111,7 @@ List configured offices/floors and validate floor SVGs against the
 - `office floors list [--office ID] [--json] [--data-dir DIR]`
 - `office floors validate [PATH] [--all] [--json] [--data-dir DIR]`
 - `office floors doctor [PATH] [--all] [--dry-run] [--json] [--data-dir DIR]`
+- `office floors refresh [--json]`
 
 ## Validation rules
 
@@ -213,6 +214,30 @@ JSON: `{"results": [{<fields>}]}` where `<fields>` includes
 `rooms_before`, `rooms_after`, `actions`, `warnings`.
 
 `--dry-run` reports what would change without writing the SVG.
+"""
+
+_FLOORS_REFRESH = """\
+# office floors refresh
+
+Bust the local Drive hydrator cache so the next command that resolves
+via `OFFICE_DRIVE_ROOT` re-downloads the Drive tree from scratch.
+
+## Usage
+
+    office floors refresh
+    office floors refresh --json
+
+## When to use
+
+When iterating on a floor with `OFFICE_DRIVE_TTL_SECONDS > 0`
+(default: 300s), the cached SVG keeps loading after you re-upload
+to Drive. Run `office floors refresh` after each upload to clear
+the cache, or set `OFFICE_DRIVE_TTL_SECONDS=0` for the iteration
+session and skip refresh entirely.
+
+The verb removes `~/.cache/office-cli/drive` (or
+`$OFFICE_DRIVE_CACHE_DIR`). Equivalent to `rm -rf <cache-dir>`.
+Idempotent: succeeds even if the cache dir does not yet exist.
 """
 
 _SEATS = """\
@@ -399,6 +424,7 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("floors", "list"): _FLOORS_LIST,
     ("floors", "validate"): _FLOORS_VALIDATE,
     ("floors", "doctor"): _FLOORS_DOCTOR,
+    ("floors", "refresh"): _FLOORS_REFRESH,
     ("seats",): _SEATS,
     ("seats", "assign"): _SEATS_ASSIGN,
     ("seats", "move"): _SEATS_MOVE,

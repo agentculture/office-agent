@@ -136,6 +136,11 @@ def _drive_ttl_seconds() -> int:
 
 
 def _drive_cache_root() -> Path:
+    return drive_cache_root()
+
+
+def drive_cache_root() -> Path:
+    """Where the Drive hydrator caches downloads. Public for `floors refresh`."""
     raw = os.environ.get("OFFICE_DRIVE_CACHE_DIR", "").strip()
     if raw:
         return Path(raw).expanduser()

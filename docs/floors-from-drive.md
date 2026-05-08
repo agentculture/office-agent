@@ -33,6 +33,22 @@ Permissions follow the building: TLV facilities gets edit on
 `Tel Aviv (tlv)/`, Frankfurt facilities on theirs, etc. Read-only
 share with the service-account email at the root level.
 
+> **Workspace ACL gotcha.** Some corporate Google Workspaces
+> (Tipalti's included) **do not propagate** a folder share to files
+> later uploaded into that folder by a different account. The
+> service account ends up with access to the folder but not to the
+> files inside it, and Drive's API returns an empty listing — not a
+> permission error. If `office floors validate <id>` reports a known
+> floor as missing and the hydrator emits `office folder ... lists
+> empty, but offices.yaml declares N floor(s) under it`, this is
+> almost always why. Two ways to fix it:
+>
+> - **Share-before-upload**: share the office folder with the SA
+>   first, *then* drop SVGs into it. Inheritance applies at upload
+>   time.
+> - **Per-file share**: select all files inside the folder and share
+>   them individually with the SA email.
+
 ## `offices.yaml` shape (Drive copy)
 
 The Drive YAML uses **bare filenames** for SVGs — no folder prefix:
@@ -133,11 +149,30 @@ mode for that invocation, even with `OFFICE_DRIVE_ROOT` set.
 - Default TTL: 300s (matches BambooHR + Sheets).
 - `OFFICE_DRIVE_TTL_SECONDS=0` forces a fresh fetch every boot
   (useful for ops debugging, or right after an operator edits Drive).
-- Cache invalidation: delete the cache dir.
+- Cache invalidation: use the built-in verb (or delete the cache dir
+  by hand if `office` isn't on PATH).
 
   ```bash
-  rm -rf ~/.cache/office-cli/drive
+  office floors refresh                  # busts the hydrator cache
+  rm -rf ~/.cache/office-cli/drive       # equivalent
   ```
+
+### Iteration workflow
+
+When iterating on a floor (Inkscape edit → Drive re-upload → render
+check), TTL > 0 will keep serving the previous version for up to
+five minutes. Two clean ways to skip the wait:
+
+```bash
+# Option A: short-circuit the cache for the iteration session.
+export OFFICE_DRIVE_TTL_SECONDS=0
+uv run office floors validate tlv-floor-5     # always fetches fresh
+
+# Option B: keep TTL > 0, refresh between uploads.
+unset OFFICE_DRIVE_TTL_SECONDS                # (or set to 300)
+office floors refresh                         # after each Drive upload
+uv run office floors validate tlv-floor-5
+```
 
 ## End-to-end smoke test
 
