@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.2] - 2026-05-08
+
+### Fixed
+
+- `office floors doctor` emits a browser-compatible SVG root again. After PR #50's review, `ET.register_namespace` calls were removed to clear Sonar S5332 hotspots, but that made ElementTree write `<ns0:svg xmlns:ns0="...">` instead of `<svg xmlns="...">`. Browsers (and the seat-map web UI) rejected the prefixed-root form as 'not a valid SVG document' even though the XML was well-formed. Restored the SVG default-namespace registration; the inkscape/sodipodi/xlink ones stay unregistered (cosmetic only, not browser-load-bearing). Sonar will flag the W3C namespace URI as a low-severity hotspot, which we accept with rationale: it's a namespace identifier, not a fetched URL.
+
 ## [0.11.1] - 2026-05-08
 
 ### Added

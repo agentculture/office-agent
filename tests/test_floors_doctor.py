@@ -180,6 +180,31 @@ def test_doctor_malformed_xml_raises_office_error(data_dir: Path) -> None:
     assert "well-formed" in exc.value.message.lower()
 
 
+def test_doctor_writes_browser_compatible_svg_root(data_dir: Path) -> None:
+    """Regression: doctor must emit `<svg xmlns="...">` (default
+    namespace), not `<ns0:svg xmlns:ns0="...">`. Browsers reject the
+    prefixed-root form even though the XML is well-formed."""
+    svg_path = data_dir / "floors" / "tlv-floor-5.svg"
+    polluted = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080">'
+        '<rect id="g1" class="seat" x="100" y="100" width="40" height="40"/>'
+        '<rect id="off" class="seat" x="100" y="-500" width="40" height="40"/>'
+        '<polygon id="r" class="room" points="1400,300 1700,300 1700,500 1400,500"/>'
+        "</svg>\n"
+    )
+    svg_path.write_text(polluted, encoding="utf-8")
+
+    doctor_svg(svg_path, _floor(data_dir))
+
+    written = svg_path.read_text(encoding="utf-8")
+    # Root must be bare `<svg`, not `<ns0:svg`. Allow a leading XML decl.
+    assert "<ns0:svg" not in written
+    assert "<svg " in written
+    # And the SVG namespace must be the default xmlns.
+    assert 'xmlns="http://www.w3.org/2000/svg"' in written
+
+
 def test_doctor_polygon_with_malformed_points_does_not_crash(
     data_dir: Path,
 ) -> None:
