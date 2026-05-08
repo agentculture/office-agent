@@ -19,7 +19,7 @@ from office_cli.floors import (
     scaffold_svg,
     validate_floor,
 )
-from office_cli.offices import Floor, append_floor_entry, load_offices
+from office_cli.offices import Floor, append_floor_entry, load_offices, update_floor_entry
 
 _HELP_JSON = "Emit structured JSON."
 _DOCTOR_HINT_THRESHOLD = 3
@@ -967,11 +967,21 @@ def _build_floor_entry(floor_id: str, src_floor: Floor | None) -> dict:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    """Diagnose-and-fix floor SVGs: drop off-page / duplicate shapes,
-    renumber per ``offices.yaml`` cluster spec."""
+    """Diagnose-and-fix floor SVGs.
+
+    Default (keep-all): just renumber the ids — preserves every traced
+    shape, auto-grows offices.yaml's cluster capacities and rooms list
+    to match.
+
+    ``--prune``: drop off-page shapes + dedupe near-duplicates +
+    renumber per the existing cluster spec (drops excess). Original
+    PR-A behavior, opt-in.
+    """
     data_dir = resolve_data_dir(args)
-    floor_index = _index_floors(load_offices(data_dir))
+    offices = load_offices(data_dir)
+    floor_index = _index_floors(offices)
     targets = _resolve_targets(args, floor_index, data_dir)
+    prune = bool(getattr(args, "prune", False))
     payload: list[dict[str, object]] = []
     for target in targets:
         floor = floor_index.get(target)
@@ -981,13 +991,69 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 message=f"SVG {target} is not declared in offices.yaml",
                 remediation="add a floors entry pointing at this SVG, or pass an SVG that is",
             )
-        report = doctor_svg(target, floor, dry_run=bool(args.dry_run))
+        report = doctor_svg(target, floor, dry_run=bool(args.dry_run), prune=prune)
+        # Auto-grow offices.yaml when keep-all mode produced more
+        # shapes than the declared spec covers. Skipped on dry-run and
+        # in prune mode (where nothing grew).
+        if not args.dry_run and not prune:
+            _maybe_autogrow_yaml(data_dir, offices, floor, report)
         payload.append(report.to_dict())
     if args.json:
         emit_result({"results": payload}, json_mode=True)
     else:
         _print_doctor_text(payload)
     return 0
+
+
+def _maybe_autogrow_yaml(
+    data_dir: Path,
+    offices: dict,
+    floor: Floor,
+    report,
+) -> None:
+    """Update offices.yaml if the doctor's new spec differs from declared.
+
+    Issue #54 follow-up. Bumps cluster capacities and expands the rooms
+    list when keep-all mode produced shapes beyond declared capacity.
+    Default room metadata (`name`, `type`, `capacity`) is filled in for
+    newly-added rooms; existing rooms keep their declared metadata.
+    """
+    declared_caps = {letter: c.capacity for letter, c in floor.clusters.items()}
+    declared_rooms = list(floor.rooms.keys())
+    if report.new_clusters == declared_caps and report.new_rooms == declared_rooms:
+        return
+    # Find which office this floor belongs to.
+    office_id = next((oid for oid, o in offices.items() if floor.id in o.floors), None)
+    if office_id is None:
+        return  # shouldn't happen if floor came from offices
+    yaml_path = data_dir / "data" / "offices.yaml"
+    new_clusters_spec = {
+        letter: {
+            "capacity": cap,
+            "type": (floor.clusters[letter].type if letter in floor.clusters else "open-space"),
+        }
+        for letter, cap in report.new_clusters.items()
+    }
+    new_rooms_spec = {
+        rid: (
+            {
+                "name": floor.rooms[rid].name,
+                "type": floor.rooms[rid].type,
+                "capacity": floor.rooms[rid].capacity,
+            }
+            if rid in floor.rooms
+            else {"name": f"Room {rid}", "type": "meeting", "capacity": 4}
+        )
+        for rid in report.new_rooms
+    }
+    update_floor_entry(
+        yaml_path,
+        office_id,
+        floor.id,
+        clusters=new_clusters_spec,
+        rooms=new_rooms_spec,
+    )
+    report.actions.append(f"updated offices.yaml: {floor.id} clusters/rooms auto-grown")
 
 
 def _print_doctor_text(payload: list[dict[str, object]]) -> None:
@@ -1177,6 +1243,15 @@ def register(sub: argparse._SubParsersAction) -> None:
         help="Path to a floor SVG, or a floor id (e.g. 'tlv-floor-5').",
     )
     p_doc.add_argument("--all", action="store_true", help="Doctor every declared SVG.")
+    p_doc.add_argument(
+        "--prune",
+        action="store_true",
+        help=(
+            "Aggressive cleanup: drop off-page shapes + dedupe near-duplicates "
+            "+ drop excess beyond declared capacity. Default keeps everything "
+            "and just fixes the ids (auto-growing offices.yaml to match)."
+        ),
+    )
     p_doc.add_argument(
         "--dry-run",
         action="store_true",

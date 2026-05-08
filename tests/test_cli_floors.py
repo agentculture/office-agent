@@ -71,8 +71,10 @@ def test_floors_validate_relative_path_from_other_cwd(
     assert payload["results"][0]["ok"] is True
 
 
-def test_floors_doctor_dry_run_reports(data_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """Polluted SVG → dry-run reports actions but doesn't write."""
+def test_floors_doctor_prune_dry_run_reports(
+    data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Polluted SVG with --prune --dry-run → reports drops without writing."""
     svg = data_dir / "floors" / "tlv-floor-5.svg"
     polluted = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -92,6 +94,7 @@ def test_floors_doctor_dry_run_reports(data_dir: Path, capsys: pytest.CaptureFix
             "floors",
             "doctor",
             str(svg),
+            "--prune",
             "--dry-run",
             "--json",
             "--data-dir",
@@ -108,6 +111,74 @@ def test_floors_doctor_dry_run_reports(data_dir: Path, capsys: pytest.CaptureFix
     assert result["rooms_after"] == 1
     # No write happened.
     assert svg.read_text(encoding="utf-8") == before
+
+
+def test_floors_doctor_default_keep_all_autogrows_yaml(
+    data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The new default: keep all 21 seats, fix ids, mutate offices.yaml.
+
+    This is the headline e2e for PR-E. The fixture has T:6 + Z:2; after
+    doctor on a polluted 21-seat SVG, offices.yaml should show T:21.
+    """
+    svg = data_dir / "floors" / "tlv-floor-5.svg"
+    # 21 garbled seats + 14 garbled rooms (mirrors test_floors_doctor.py's
+    # _polluted_svg fixture).
+    on_page_seats = [
+        ("5-T-06-7-2", 92.99, 73.25),
+        ("5-T-06-7-0", 145.04, 75.10),
+        ("5-T-06", 41.80, 102.08),
+        ("5-T-06-7", 93.05, 101.54),
+        ("5-T-06-7-4", 143.73, 102.45),
+    ]
+    seat_lines = [
+        f'<rect id="{sid}" class="seat" x="{x}" y="{y}" width="51" height="25"/>'
+        for sid, x, y in on_page_seats
+    ]
+    seat_lines += [
+        f'<rect id="5-T-06-extra-{i}" class="seat" '
+        f'x="{50 + (i * 3 % 100)}" y="{-300 - i * 8}" width="51" height="25"/>'
+        for i in range(16)
+    ]
+    room_lines = []
+    for i in range(14):
+        offset = i * 0.5
+        rid = "5.18" if i == 0 else f"5.18-{'-'.join(str(d) for d in range(1, i + 1))}"
+        pts = (
+            f"{1400 + offset},{300 + offset} {1700 + offset},{300 + offset} "
+            f"{1700 + offset},{500 + offset} {1400 + offset},{500 + offset}"
+        )
+        room_lines.append(f'<polygon id="{rid}" class="room" points="{pts}"/>')
+    polluted = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080">\n'
+        + "\n".join(seat_lines)
+        + "\n"
+        + "\n".join(room_lines)
+        + "\n"
+        + "</svg>\n"
+    )
+    svg.write_text(polluted, encoding="utf-8")
+
+    rc = main(
+        [
+            "floors",
+            "doctor",
+            str(svg),
+            "--json",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    result = payload["results"][0]
+    assert result["seats_before"] == 21
+    assert result["seats_after"] == 21
+    assert result["new_clusters"]["T"] == 21
+    # offices.yaml mutated.
+    yaml_text = (data_dir / "data" / "offices.yaml").read_text(encoding="utf-8")
+    assert "T: { capacity: 21" in yaml_text
 
 
 def test_floors_doctor_writes_and_validate_passes(

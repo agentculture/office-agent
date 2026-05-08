@@ -59,11 +59,12 @@ def _polluted_svg(view_box: str = "0 0 1920 1080") -> str:
     )
 
 
-def test_doctor_drops_off_page_and_dedupes_rooms(data_dir: Path) -> None:
+def test_doctor_prune_drops_off_page_and_dedupes_rooms(data_dir: Path) -> None:
+    """`--prune` mode: the original aggressive cleanup."""
     svg_path = data_dir / "floors" / "tlv-floor-5.svg"
     svg_path.write_text(_polluted_svg(), encoding="utf-8")
 
-    report = doctor_svg(svg_path, _floor(data_dir))
+    report = doctor_svg(svg_path, _floor(data_dir), prune=True)
 
     assert report.seats_before == 21
     assert report.rooms_before == 14
@@ -73,11 +74,11 @@ def test_doctor_drops_off_page_and_dedupes_rooms(data_dir: Path) -> None:
     assert any("near-duplicate rooms" in a for a in report.actions)
 
 
-def test_doctor_renumbers_in_spatial_order(data_dir: Path) -> None:
+def test_doctor_prune_renumbers_in_spatial_order(data_dir: Path) -> None:
     svg_path = data_dir / "floors" / "tlv-floor-5.svg"
     svg_path.write_text(_polluted_svg(), encoding="utf-8")
 
-    doctor_svg(svg_path, _floor(data_dir))
+    doctor_svg(svg_path, _floor(data_dir), prune=True)
 
     # The five survivors get cluster T slots. One of the polluted
     # ids (`5-T-06`) was already a valid slot, so the doctor preserves
@@ -87,11 +88,11 @@ def test_doctor_renumbers_in_spatial_order(data_dir: Path) -> None:
     assert sorted(svg.room_ids) == ["5.18"]
 
 
-def test_doctor_makes_validate_clean(data_dir: Path) -> None:
+def test_doctor_prune_makes_validate_clean(data_dir: Path) -> None:
     svg_path = data_dir / "floors" / "tlv-floor-5.svg"
     svg_path.write_text(_polluted_svg(), encoding="utf-8")
 
-    doctor_svg(svg_path, _floor(data_dir))
+    doctor_svg(svg_path, _floor(data_dir), prune=True)
 
     svg = parse_svg(svg_path)
     issues = validate_floor(svg, _floor(data_dir))
@@ -99,12 +100,12 @@ def test_doctor_makes_validate_clean(data_dir: Path) -> None:
     assert errors == []
 
 
-def test_doctor_dry_run_reports_without_writing(data_dir: Path) -> None:
+def test_doctor_prune_dry_run_reports_without_writing(data_dir: Path) -> None:
     svg_path = data_dir / "floors" / "tlv-floor-5.svg"
     polluted = _polluted_svg()
     svg_path.write_text(polluted, encoding="utf-8")
 
-    report = doctor_svg(svg_path, _floor(data_dir), dry_run=True)
+    report = doctor_svg(svg_path, _floor(data_dir), dry_run=True, prune=True)
 
     assert report.dry_run is True
     assert report.seats_after == 5
@@ -112,22 +113,22 @@ def test_doctor_dry_run_reports_without_writing(data_dir: Path) -> None:
     assert svg_path.read_text(encoding="utf-8") == polluted
 
 
-def test_doctor_warns_when_capacity_short(data_dir: Path) -> None:
+def test_doctor_prune_warns_when_capacity_short(data_dir: Path) -> None:
     """offices.yaml declares 6+2=8 seats; polluted fixture has 5
-    on-page survivors. Doctor should still succeed but emit a warning
-    so the operator knows to trace more in Inkscape."""
+    on-page survivors after prune. Doctor still succeeds but emits a
+    warning so the operator knows to trace more."""
     svg_path = data_dir / "floors" / "tlv-floor-5.svg"
     svg_path.write_text(_polluted_svg(), encoding="utf-8")
 
-    report = doctor_svg(svg_path, _floor(data_dir))
+    report = doctor_svg(svg_path, _floor(data_dir), prune=True)
 
     assert any("5 seats traced" in w for w in report.warnings)
     assert any("declares 8" in w for w in report.warnings)
 
 
-def test_doctor_drops_excess_seats_beyond_capacity(data_dir: Path) -> None:
-    """An SVG with more on-page seats than the cluster total should
-    have the excess deleted, not left to fail validation later."""
+def test_doctor_prune_drops_excess_seats_beyond_capacity(data_dir: Path) -> None:
+    """Prune mode: SVG with more on-page seats than total capacity has
+    the excess deleted."""
     extras = "".join(
         f'<rect id="extra-{i}" class="seat" x="{200 + i * 60}" y="800" width="40" height="20"/>'
         for i in range(15)  # 15 extra seats > total capacity 8
@@ -142,11 +143,82 @@ def test_doctor_drops_excess_seats_beyond_capacity(data_dir: Path) -> None:
     svg_path = data_dir / "floors" / "tlv-floor-5.svg"
     svg_path.write_text(svg_text, encoding="utf-8")
 
-    report = doctor_svg(svg_path, _floor(data_dir))
+    report = doctor_svg(svg_path, _floor(data_dir), prune=True)
 
     assert report.seats_before == 15
     assert report.seats_after == 8  # T:6 + Z:2
     assert any("excess seats" in a for a in report.actions)
+
+
+def test_doctor_default_keep_all_preserves_21_seats(data_dir: Path) -> None:
+    """The new default: keep all 21 seats, just fix the garbled ids.
+
+    All garbled ``5-T-06-...`` cascade ids get renumbered to sequential
+    ``5-T-01..21``. Off-page shapes are kept; near-duplicates kept.
+    """
+    svg_path = data_dir / "floors" / "tlv-floor-5.svg"
+    svg_path.write_text(_polluted_svg(), encoding="utf-8")
+
+    report = doctor_svg(svg_path, _floor(data_dir))
+
+    assert report.seats_before == 21
+    assert report.rooms_before == 14
+    assert report.seats_after == 21
+    assert report.rooms_after == 14
+    # All seats live in cluster T (their original cluster letter).
+    assert report.new_clusters["T"] == 21
+    # Z cluster preserved with capacity 0 (was declared, no shapes).
+    assert report.new_clusters.get("Z") == 0
+    parsed = parse_svg(svg_path)
+    assert sorted(parsed.seat_ids) == [f"5-T-{n:02d}" for n in range(1, 22)]
+    # Rooms get sequential ids starting at 18 (the first valid suffix
+    # found in the polluted ``5.18-1-3``-style cascade).
+    assert sorted(parsed.room_ids) == [f"5.{n}" for n in range(18, 32)]
+
+
+def test_doctor_default_dry_run_returns_new_spec_without_writing(data_dir: Path) -> None:
+    """The CLI auto-grow path needs to preview the new spec without
+    mutating the file. Dry-run must return ``new_clusters`` /
+    ``new_rooms`` populated."""
+    svg_path = data_dir / "floors" / "tlv-floor-5.svg"
+    polluted = _polluted_svg()
+    svg_path.write_text(polluted, encoding="utf-8")
+
+    report = doctor_svg(svg_path, _floor(data_dir), dry_run=True)
+
+    assert report.dry_run is True
+    assert report.new_clusters["T"] == 21
+    assert len(report.new_rooms) == 14
+    # File untouched.
+    assert svg_path.read_text(encoding="utf-8") == polluted
+
+
+def test_doctor_default_seat_with_unknown_letter_falls_back_to_first(
+    data_dir: Path,
+) -> None:
+    """A seat id with no cluster-letter prefix (or an unknown one) gets
+    bucketed into the first declared cluster letter so it doesn't get
+    lost. Ensures keep-all mode doesn't drop shapes silently."""
+    svg_text = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080">\n'
+        # No cluster prefix at all:
+        '<rect id="orphan-1" class="seat" x="100" y="100" width="40" height="20"/>\n'
+        # Existing T-cluster seats:
+        '<rect id="5-T-99" class="seat" x="200" y="100" width="40" height="20"/>\n'
+        '<polygon id="r" class="room" points="1400,300 1700,300 1700,500 1400,500"/>\n'
+        "</svg>\n"
+    )
+    svg_path = data_dir / "floors" / "tlv-floor-5.svg"
+    svg_path.write_text(svg_text, encoding="utf-8")
+
+    report = doctor_svg(svg_path, _floor(data_dir))
+
+    assert report.seats_after == 2
+    parsed = parse_svg(svg_path)
+    # Both seats should land in cluster T (T is alphabetically first
+    # in the fixture's `T, Z` declarations).
+    assert sorted(parsed.seat_ids) == ["5-T-01", "5-T-02"]
 
 
 def test_doctor_idempotent_on_clean_file(data_dir: Path) -> None:
@@ -244,6 +316,13 @@ def test_doctor_polygon_with_malformed_points_does_not_crash(
     svg_path = data_dir / "floors" / "tlv-floor-5.svg"
     svg_path.write_text(svg_text, encoding="utf-8")
 
+    # Default (keep-all): malformed polygons survive, just renumbered.
+    # Test only asserts no crash — the polygons are kept verbatim with
+    # new ids; their bad ``points`` is the renderer's problem to deal with.
     report = doctor_svg(svg_path, _floor(data_dir))
-    # Doctor completed; the valid room got the slot.
+    assert report.rooms_after == 3
+    # Prune-mode: the bad polygons (whose center is (0, 0)) are dropped
+    # as off-page outliers; only the valid room survives.
+    svg_path.write_text(svg_text, encoding="utf-8")  # restore
+    report = doctor_svg(svg_path, _floor(data_dir), prune=True)
     assert report.rooms_after == 1

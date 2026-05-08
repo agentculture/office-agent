@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-05-09
+
+### Added
+
+- `office floors doctor --prune` flag — opt-in for the original aggressive cleanup (drop off-page shapes + dedupe near-duplicates + drop excess beyond declared capacity). The previous default behavior is now behind this flag.
+- `DoctorReport` exposes `new_clusters` (letter → capacity) and `new_rooms` (id list) so callers can preview the post-doctor spec without mutating the file (e.g. via `--dry-run`).
+- `office_cli.offices.update_floor_entry` — textually replace a floor's `clusters:` and/or `rooms:` blocks while preserving the rest of the YAML byte-for-byte. Used by doctor's auto-grow.
+
+### Changed
+
+- **`office floors doctor` default behavior is now keep-all.** No off-page drop, no dedupe, no excess-drop — the verb just renumbers ids per cluster (auto-detecting the letter from existing ids) and writes the cleaned SVG back. After write, it auto-grows `data/offices.yaml`: bumps cluster capacities to match actual counts, replaces the rooms block with the new sequential id list (default `name: "Room <id>"`, `type: meeting`, `capacity: 4` for newly-added rooms). Operators no longer lose traced shapes when doctor's heuristics are over-aggressive. Pass `--prune` to restore the previous behavior. Issue #54 follow-up.
+
+### Fixed
+
 ## [0.14.0] - 2026-05-08
 
 ### Added

@@ -218,6 +218,141 @@ def _line_belongs_to_block(line: str, item_prefix: str) -> bool:
     return False
 
 
+def update_floor_entry(
+    yaml_path: Path,
+    office_id: str,
+    floor_id: str,
+    *,
+    clusters: Mapping[str, Mapping[str, object]] | None = None,
+    rooms: Mapping[str, Mapping[str, object]] | None = None,
+) -> None:
+    """Replace the ``clusters:`` and/or ``rooms:`` blocks of a floor entry.
+
+    Used by ``office floors doctor`` (issue #54 follow-up) to auto-grow
+    the YAML when the SVG has more shapes than declared. Locates the
+    matching ``- id: <floor_id>`` block under ``office_id`` and replaces
+    its child ``clusters:`` / ``rooms:`` subtrees textually, preserving
+    everything else byte-for-byte.
+
+    ``clusters`` is a mapping ``letter -> {"capacity": int, "type": str}``.
+    ``rooms`` is a mapping ``room_id -> {"name": str, "type": str,
+    "capacity": int}``. Pass ``None`` to leave that subtree unchanged.
+    """
+    if yaml_path.name != "offices.yaml":
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"refusing to write a non-offices.yaml file: {yaml_path}",
+            remediation="pass a path whose final component is `offices.yaml`",
+        )
+    if not yaml_path.is_file():
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"offices.yaml not found: {yaml_path}",
+            remediation="check the --data-dir or run from the repo root",
+        )
+    text = yaml_path.read_text(encoding="utf-8")
+    parsed = _parse_offices(text, yaml_path)
+    _find_office(parsed, office_id, yaml_path)  # validates existence
+    lines = text.splitlines(keepends=True)
+    floor_line, floor_indent = _locate_floor_in_office(lines, office_id, floor_id, yaml_path)
+    nested = " " * (floor_indent + 2)
+    new_text = text
+    new_lines = new_text.splitlines(keepends=True)
+    # Re-locate inside new_lines after each replacement (offsets shift).
+    if clusters is not None:
+        new_block = _format_clusters_block(dict(clusters), nested)
+        new_lines = _replace_subtree(new_lines, floor_line, floor_indent, "clusters:", new_block)
+        # Recompute floor_line in case clusters block size changed.
+        floor_line, floor_indent = _locate_floor_in_office(
+            new_lines, office_id, floor_id, yaml_path
+        )
+        nested = " " * (floor_indent + 2)
+    if rooms is not None:
+        new_block = _format_rooms_block(dict(rooms), nested)
+        new_lines = _replace_subtree(new_lines, floor_line, floor_indent, "rooms:", new_block)
+    yaml_path.write_text("".join(new_lines), encoding="utf-8")
+
+
+def _locate_floor_in_office(
+    lines: list[str], office_id: str, floor_id: str, path: Path
+) -> tuple[int, int]:
+    """Return ``(line_index, indent)`` for the floor's ``- id:`` line."""
+    office_line, office_indent = _locate_office_block(lines, office_id, path)
+    floors_line, _ = _locate_floors_key(lines, office_line, office_indent, office_id, path)
+    needle = re.compile(r"^(\s*)- id:\s*" + re.escape(floor_id) + r"\s*$")
+    for i in range(floors_line + 1, len(lines)):
+        m = needle.match(lines[i])
+        if m:
+            return i, len(m.group(1))
+        # If we walked past the office's floors list, the floor isn't there.
+        if re.match(r"^" + " " * office_indent + r"- id:", lines[i]):
+            break
+    raise OfficeError(
+        code=EXIT_USER_ERROR,
+        message=(f"floor {floor_id!r} not found under office {office_id!r} in {path}"),
+        remediation="check the floor id matches the offices.yaml entry",
+    )
+
+
+def _replace_subtree(
+    lines: list[str],
+    floor_line: int,
+    floor_indent: int,
+    key_name: str,
+    new_block: str,
+) -> list[str]:
+    """Replace the ``<nested>key_name:`` block under ``floor_line``.
+
+    The block runs from the ``key_name:`` line through every following
+    line whose indent is deeper than ``floor_indent + 2`` (i.e. inside
+    the floor's mapping). Stops at any line at floor-level or shallower,
+    or at the next ``- id:`` of the same depth.
+    """
+    nested = " " * (floor_indent + 2)
+    pattern = re.compile(r"^" + re.escape(nested) + re.escape(key_name) + r"\s*$")
+    block_start = -1
+    for i in range(floor_line + 1, len(lines)):
+        if pattern.match(lines[i]):
+            block_start = i
+            break
+        # Walked off the floor's mapping into the next sibling.
+        if lines[i].startswith(" " * floor_indent + "- ") or (
+            lines[i].strip() and not lines[i].startswith(nested)
+        ):
+            break
+    if block_start < 0:
+        # Key didn't exist; insert a new block at the end of the floor's mapping.
+        insert_at = _find_floor_block_end(lines, floor_line, floor_indent)
+        return lines[:insert_at] + [new_block] + lines[insert_at:]
+    block_end = _find_subtree_end(lines, block_start, len(nested))
+    return lines[:block_start] + [new_block] + lines[block_end:]
+
+
+def _find_subtree_end(lines: list[str], block_start: int, key_indent: int) -> int:
+    """End-line (exclusive) of a YAML key's value block."""
+    for i in range(block_start + 1, len(lines)):
+        line = lines[i]
+        if not line.strip():
+            continue
+        # First line at or shallower than key_indent ends the subtree.
+        leading = len(line) - len(line.lstrip())
+        if leading <= key_indent:
+            return i
+    return len(lines)
+
+
+def _find_floor_block_end(lines: list[str], floor_line: int, floor_indent: int) -> int:
+    """End-line (exclusive) of a floor's mapping body."""
+    nested = " " * (floor_indent + 2)
+    for i in range(floor_line + 1, len(lines)):
+        line = lines[i]
+        if not line.strip():
+            continue
+        if not line.startswith(nested):
+            return i
+    return len(lines)
+
+
 def _format_floor_block(floor: Mapping[str, object], item_indent: str = _DEFAULT_INDENT) -> str:
     """Render a floor mapping as a YAML block matching the file's indent.
 
