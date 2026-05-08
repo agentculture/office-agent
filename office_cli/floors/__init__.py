@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from office_cli.floors._copy_layout import CopyReport, copy_layout
 from office_cli.floors._doctor import DoctorReport, doctor_svg
 from office_cli.floors._ids import (
     ROOM_RE,
@@ -15,12 +16,14 @@ from office_cli.floors._svg import FloorSvg, parse_svg
 from office_cli.floors._validate import Issue, Severity, validate_floor
 
 __all__ = [
+    "CopyReport",
     "DoctorReport",
     "FloorSvg",
     "Issue",
     "ROOM_RE",
     "SEAT_RE",
     "Severity",
+    "copy_layout",
     "doctor_svg",
     "is_room_id",
     "is_seat_id",

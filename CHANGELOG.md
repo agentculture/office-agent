@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-05-08
+
+### Added
+
+- `office floors copy-layout <src> <dst> [--overwrite]` — copy `<rect class="seat">` and `<polygon class="room">` geometry from one floor's SVG into another, renumbering ids per the destination's cluster spec. Many floors share a layout (same column grid, same desk arrangement); this verb avoids re-tracing each one in Inkscape. Reuses the doctor verb's `_assign_ids` / `_select` / `_capacity_warnings` / `_seat_ids_for` helpers — same renumbering contract, just sourcing elements from another file. Refuses to clobber a `status: active` destination without `--overwrite`. Issue #54 follow-up.
+- `office floors new <floor-id> --pdf <p> --page <N|label> [--office <oid>] [--copy-from <src-id>]` — end-to-end "create a floor" verb. Appends the entry to `data/offices.yaml` (status: draft), scaffolds the SVG, and optionally copies layout from an existing floor in one shot. With `--copy-from`, the new entry inherits the source's full cluster + room spec so the copied seats/rooms fit cleanly. Refuses if the floor id is already declared anywhere in offices.yaml.
+- `office_cli/offices/append_floor_entry` — textual splice into `data/offices.yaml` that preserves comments, indentation, and field ordering. PyYAML's `safe_dump` would reorder fields and strip comments; we instead parse for validation and locate the right `floors:` list, then insert a new entry at the end of that list as raw YAML text. Errors with a clear remediation if the file's indentation doesn't match — operators hand-edit rather than risk a guess.
+
+### Changed
+
+### Fixed
+
 ## [0.12.0] - 2026-05-08
 
 ### Added

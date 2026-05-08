@@ -1,0 +1,247 @@
+"""Append a new floor entry to ``data/offices.yaml`` without rewriting the file.
+
+PyYAML's :func:`yaml.safe_dump` strips comments and reorders fields,
+which would mangle the carefully-commented ``data/offices.yaml``. This
+module instead does a **textual splice**: parse the file once with
+PyYAML to validate structure, locate the target office's ``floors:``
+list in the source text, and insert a new entry while preserving
+everything else byte-for-byte.
+
+The verb ``office floors new`` (issue #54 follow-up) calls
+:func:`append_floor_entry` to add a draft floor without operators
+having to hand-edit the YAML.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import Mapping
+
+import yaml
+
+from office_cli.cli._errors import EXIT_USER_ERROR, OfficeError
+
+_INDENT = "      "  # 6 spaces — list items under offices[].floors
+
+
+def append_floor_entry(
+    yaml_path: Path,
+    office_id: str,
+    floor: Mapping[str, object],
+) -> None:
+    """Append a floor entry under ``offices[id=office_id].floors``.
+
+    ``floor`` is a mapping with at least ``id`` and ``svg`` keys, plus
+    optional ``status``, ``clusters``, ``rooms``. Validation rules:
+
+    - ``yaml_path`` must be valid YAML and have a top-level
+      ``offices:`` list.
+    - ``office_id`` must match an existing office.
+    - ``floor['id']`` must not already be declared under that office.
+
+    The function preserves comments, trailing whitespace, and the
+    rest of the file.
+    """
+    if not yaml_path.is_file():
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"offices.yaml not found: {yaml_path}",
+            remediation="check the --data-dir or run from the repo root",
+        )
+    fid = str(floor.get("id", "")).strip()
+    if not fid:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message="floor entry is missing `id`",
+            remediation="pass a floor dict with at least `id` and `svg`",
+        )
+    text = yaml_path.read_text(encoding="utf-8")
+    parsed = _parse_offices(text, yaml_path)
+    office = _find_office(parsed, office_id, yaml_path)
+    _ensure_floor_id_unique(office, fid, office_id)
+
+    # Locate the matching `- id: <office_id>` block and the end of its
+    # `floors:` child list in the source text.
+    insertion_point = _find_insertion_point(text, office_id, yaml_path)
+    new_block = _format_floor_block(floor)
+    new_text = text[:insertion_point] + new_block + text[insertion_point:]
+    yaml_path.write_text(new_text, encoding="utf-8")
+
+
+def _parse_offices(text: str, path: Path) -> list[dict]:
+    try:
+        raw = yaml.safe_load(text) or {}
+    except yaml.YAMLError as err:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"offices.yaml is not valid YAML: {path}: {err}",
+            remediation="fix the syntax error and rerun",
+        ) from err
+    offices = raw.get("offices") if isinstance(raw, dict) else None
+    if not isinstance(offices, list):
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"offices.yaml is missing top-level `offices:` list: {path}",
+            remediation="see data/offices.yaml.example for the expected shape",
+        )
+    return offices
+
+
+def _find_office(offices: list[dict], office_id: str, path: Path) -> dict:
+    for entry in offices:
+        if isinstance(entry, dict) and str(entry.get("id", "")).strip() == office_id:
+            return entry
+    known = ", ".join(sorted(str(e.get("id", "")) for e in offices if isinstance(e, dict)))
+    raise OfficeError(
+        code=EXIT_USER_ERROR,
+        message=f"unknown office {office_id!r} in {path}",
+        remediation=f"known offices: {known or '(none)'}",
+    )
+
+
+def _ensure_floor_id_unique(office: dict, floor_id: str, office_id: str) -> None:
+    floors = office.get("floors") or []
+    if not isinstance(floors, list):
+        return
+    for entry in floors:
+        if isinstance(entry, dict) and str(entry.get("id", "")).strip() == floor_id:
+            raise OfficeError(
+                code=EXIT_USER_ERROR,
+                message=(f"floor id {floor_id!r} already declared under office " f"{office_id!r}"),
+                remediation=(
+                    "delete the existing entry first, or pick a different "
+                    "floor id (refusing to silently overwrite)"
+                ),
+            )
+
+
+def _find_insertion_point(text: str, office_id: str, path: Path) -> int:
+    """Return the byte offset in ``text`` where the new floor entry goes.
+
+    Walks the source line-by-line:
+
+    1. Find ``- id: <office_id>`` (start of the matching office block).
+    2. Inside that block, find ``floors:``.
+    3. Scan forward to the last child entry of that floors list (lines
+       starting with the expected indent ``      - ``).
+    4. Insert at the end of that last entry.
+
+    Errors with a clear remediation if the file's indentation doesn't
+    match — let the operator hand-edit rather than guess.
+    """
+    lines = text.splitlines(keepends=True)
+    office_line, office_indent = _locate_office_block(lines, office_id, path)
+    floors_line, floors_indent = _locate_floors_key(
+        lines, office_line, office_indent, office_id, path
+    )
+    expected_item_prefix = " " * (floors_indent + 2) + "- "
+    return _scan_to_block_end(lines, floors_line, expected_item_prefix)
+
+
+def _locate_office_block(lines: list[str], office_id: str, path: Path) -> tuple[int, int]:
+    needle = re.compile(r"^(\s*)- id:\s*" + re.escape(office_id) + r"\s*$")
+    for i, line in enumerate(lines):
+        m = needle.match(line)
+        if m:
+            return i, len(m.group(1))
+    raise OfficeError(
+        code=EXIT_USER_ERROR,
+        message=(
+            f"could not locate the `- id: {office_id}` line in {path}; " "structure is unusual"
+        ),
+        remediation="hand-edit data/offices.yaml or simplify its layout",
+    )
+
+
+def _locate_floors_key(
+    lines: list[str], start: int, office_indent: int, office_id: str, path: Path
+) -> tuple[int, int]:
+    inner_indent = office_indent + 2  # `- ` makes children indent 2 deeper
+    pattern = re.compile(r"^" + " " * inner_indent + r"floors:\s*$")
+    for i in range(start + 1, len(lines)):
+        line = lines[i]
+        if pattern.match(line):
+            return i, inner_indent
+        # If we hit another office at the same depth, give up.
+        if re.match(r"^" + " " * office_indent + r"- id:", line):
+            break
+    raise OfficeError(
+        code=EXIT_USER_ERROR,
+        message=(
+            f"office {office_id!r} has no `floors:` block in {path}; "
+            "add an empty `floors:` line first"
+        ),
+        remediation="hand-edit offices.yaml to declare `floors:`",
+    )
+
+
+def _scan_to_block_end(lines: list[str], floors_line: int, item_prefix: str) -> int:
+    """Find the byte offset to insert at the end of a YAML list block."""
+    last_item_end_line = floors_line  # if floors list is empty, insert right after
+    for i in range(floors_line + 1, len(lines)):
+        line = lines[i]
+        if line.strip() == "":
+            continue  # blank lines inside the block are tolerated
+        if line.startswith(item_prefix):
+            last_item_end_line = i
+            continue
+        if line.startswith(item_prefix.rstrip()):
+            last_item_end_line = i
+            continue
+        # Continuation of a multi-line item (deeper indent than item_prefix)?
+        if (
+            line[: len(item_prefix)].isspace()
+            and line.lstrip()
+            and not line.startswith(item_prefix)
+        ):
+            # Same column as item_prefix or deeper → still inside the current item.
+            stripped_indent = len(line) - len(line.lstrip())
+            if stripped_indent >= len(item_prefix):
+                last_item_end_line = i
+                continue
+        # Anything else = end of the floors list.
+        break
+    # Insert at the end of last_item_end_line (after its trailing newline).
+    offset = sum(len(line) for line in lines[: last_item_end_line + 1])
+    return offset
+
+
+def _format_floor_block(floor: Mapping[str, object]) -> str:
+    """Render a floor mapping as a `      - id: ...\\n        ...` YAML block."""
+    fid = str(floor["id"]).strip()
+    svg = str(floor.get("svg", f"floors/{fid}.svg")).strip()
+    status = str(floor.get("status", "draft")).strip()
+    out = [
+        f"{_INDENT}- id: {fid}\n",
+        f"{_INDENT}  svg: {svg}\n",
+        f"{_INDENT}  status: {status}\n",
+    ]
+    clusters = floor.get("clusters")
+    if isinstance(clusters, dict) and clusters:
+        out.append(f"{_INDENT}  clusters:\n")
+        for letter in sorted(clusters.keys()):
+            spec = clusters[letter]
+            if isinstance(spec, dict):
+                cap = int(spec.get("capacity", 1))
+                ctype = str(spec.get("type", "open-space"))
+                out.append(f"{_INDENT}    {letter}: {{ capacity: {cap}, type: {ctype} }}\n")
+    else:
+        out.append(f"{_INDENT}  clusters:\n")
+        out.append(f"{_INDENT}    T: {{ capacity: 1, type: open-space }}\n")
+    rooms = floor.get("rooms")
+    if isinstance(rooms, dict) and rooms:
+        out.append(f"{_INDENT}  rooms:\n")
+        for room_id in sorted(rooms.keys()):
+            spec = rooms[room_id]
+            if isinstance(spec, dict):
+                name = str(spec.get("name", room_id))
+                rtype = str(spec.get("type", "meeting"))
+                cap = int(spec.get("capacity", 0))
+                out.append(
+                    f'{_INDENT}    "{room_id}": '
+                    f'{{ name: "{name}", type: {rtype}, capacity: {cap} }}\n'
+                )
+    else:
+        out.append(f"{_INDENT}  rooms: {{}}\n")
+    return "".join(out)
