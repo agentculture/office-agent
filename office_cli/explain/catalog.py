@@ -111,6 +111,8 @@ List configured offices/floors and validate floor SVGs against the
 - `office floors list [--office ID] [--json] [--data-dir DIR]`
 - `office floors validate [PATH] [--all] [--json] [--data-dir DIR]`
 - `office floors doctor [PATH] [--all] [--dry-run] [--json] [--data-dir DIR]`
+- `office floors scaffold [FLOOR_ID] [--pdf P --page N|--manifest M]
+    [--force] [--out PATH] [--json] [--data-dir DIR]`
 - `office floors refresh [--json]`
 
 ## Validation rules
@@ -214,6 +216,65 @@ JSON: `{"results": [{<fields>}]}` where `<fields>` includes
 `rooms_before`, `rooms_after`, `actions`, `warnings`.
 
 `--dry-run` reports what would change without writing the SVG.
+"""
+
+_FLOORS_SCAFFOLD = """\
+# office floors scaffold
+
+Generate a placeholder floor SVG: 1920x1080 viewBox, embedded PDF page
+as background, plus one example `<rect class="seat">` and one example
+`<polygon class="room">`. The operator opens the SVG in Inkscape and
+`Ctrl+D`-duplicates the examples to trace the rest, instead of
+starting from a blank canvas.
+
+## Usage
+
+    # Single-floor mode
+    office floors scaffold tlv-floor-3 --pdf <path> --page 8
+    office floors scaffold tlv-floor-3 --pdf <path> --page "Third Floor"
+
+    # Batch mode from a manifest
+    office floors scaffold --manifest data/floor-bootstrap.yaml
+
+The floor id must already be declared in `offices.yaml` with at least
+one cluster (the example seat id derives from the cluster letter and
+the floor number). `status: draft` on the offices.yaml entry is fine
+and is what the validator expects for un-traced scaffolds.
+
+## Manifest shape
+
+    pdf: <path-to-architects.pdf>
+    floors:
+      - { id: tlv-floor-3,  page: 8  }
+      - { id: tlv-floor-4,  page: 9  }
+      - { id: tlv-floor-12, page: "12th Floor" }   # text label
+
+`pdf:` may be relative to the manifest file. `page:` is an int
+(1-based) or a string label resolved via `pdftotext`; ambiguous
+labels error rather than guessing. See
+`data/floor-bootstrap.yaml.example`.
+
+## Flags
+
+- `--out PATH` — override the output path (default: `floors/<id>.svg`
+  from offices.yaml).
+- `--force` — overwrite an existing SVG. Without it, the verb refuses
+  to clobber so re-running a manifest is safe.
+- `--json` — emit `{"results": [{floor, svg, pdf, page, bytes}, ...]}`.
+
+## Prerequisites
+
+Requires `poppler` (`pdftoppm`, `pdftotext`, `pdfinfo`) on PATH. The
+verb never installs anything; if a binary is missing, it exits with a
+clear `brew install poppler` / `apt install poppler-utils` hint.
+
+## After scaffolding
+
+The scaffold passes `office floors validate` with a single
+`floor-draft` warning (no errors). Once you've traced the real
+seats/rooms in Inkscape, run `office floors doctor <id>` to renumber
+per the cluster spec, then flip the floor's `status: draft` to
+`status: active` in offices.yaml.
 """
 
 _FLOORS_REFRESH = """\
@@ -424,6 +485,7 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("floors", "list"): _FLOORS_LIST,
     ("floors", "validate"): _FLOORS_VALIDATE,
     ("floors", "doctor"): _FLOORS_DOCTOR,
+    ("floors", "scaffold"): _FLOORS_SCAFFOLD,
     ("floors", "refresh"): _FLOORS_REFRESH,
     ("seats",): _SEATS,
     ("seats", "assign"): _SEATS_ASSIGN,

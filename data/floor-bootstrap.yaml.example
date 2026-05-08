@@ -1,0 +1,33 @@
+# Manifest for `office floors scaffold --manifest` (issue #54).
+#
+# Maps PDF pages to floor ids declared in offices.yaml. The verb runs
+# once per entry, producing floors/<id>.svg with the chosen PDF page
+# embedded as a raster background plus one example seat + room for the
+# operator to Ctrl+D-duplicate in Inkscape.
+#
+# All floor ids referenced here must already be declared in
+# `data/offices.yaml` with at least one cluster. Use `status: draft`
+# on the offices.yaml entries — the validator skips the cluster-
+# capacity check for drafts and emits a `floor-draft` warning instead.
+#
+# Copy this file to `data/floor-bootstrap.yaml` (git-ignored), point
+# `pdf:` at your architect's PDF, and adjust the `floors:` list to
+# match. Then:
+#
+#     office floors scaffold --manifest data/floor-bootstrap.yaml
+#
+# `pdf:` may be relative to this manifest file. Use ~ for $HOME.
+# `page:` is either a 1-based int or a string label that appears
+# verbatim on exactly one page (resolved via pdftotext).
+
+pdf: <path-to-architects.pdf>
+
+floors:
+  # 1-based page number — the simplest and most reliable form.
+  - { id: <office>-floor-0, page: 5  }
+  - { id: <office>-floor-1, page: 6  }
+
+  # String label — pdftotext scans each page; the label must appear
+  # on exactly one page, otherwise the verb errors with a candidate
+  # listing.
+  - { id: <office>-floor-12, page: "12th Floor" }

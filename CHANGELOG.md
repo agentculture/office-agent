@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-05-08
+
+### Added
+
+- `office floors scaffold` verb. Generates a placeholder SVG (1920×1080 viewBox, embedded PDF page as a data-URI background, plus one example `<rect class="seat">` and one example `<polygon class="room">`) for any floor declared in `offices.yaml`. Operators open the scaffold in Inkscape and `Ctrl+D`-duplicate the examples to trace the rest, instead of starting from a blank canvas. Two modes: single-floor (`scaffold <id> --pdf <p> --page <N|label>`) and batch (`scaffold --manifest <yaml>`). Refuses to overwrite an existing SVG without `--force`. Closes #54.
+- `data/floor-bootstrap.yaml.example`: template manifest for the batch mode. Pairs PDF pages with floor ids; supports both 1-based integer page numbers and text labels (resolved via `pdftotext`). Real manifests are git-ignored — they point at operator-local PDFs.
+- `floor-draft` validator rule. Floors declared with `status: draft` (the typical scaffold state) skip the cluster-capacity error and emit a single `floor-draft` warning instead, so a freshly-scaffolded floor passes `office floors validate` cleanly.
+
+### Changed
+
+- `office floors validate` recognises `status: draft` on a floor entry and skips the cluster-capacity check for those floors. The id-format, viewBox, duplicate, and untagged-shape checks still run, so a draft scaffold with garbled ids still fails — the relaxation only applies to the seat-count vs declared-capacity check.
+
+### Fixed
+
 ## [0.11.3] - 2026-05-08
 
 ### Added

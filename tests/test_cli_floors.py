@@ -388,3 +388,278 @@ def test_floors_validate_doctor_hint_in_json(
     payload = json.loads(capsys.readouterr().out)
     hint = payload["results"][0]["doctor_hint"]
     assert "office floors doctor tlv-floor-5" in hint
+
+
+def test_floors_scaffold_single_mode(
+    data_dir: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Single-floor scaffold writes to floors/<id>.svg with embedded PNG
+    + one example seat + one example room."""
+    from office_cli.floors import _scaffold as scaffold_mod
+
+    fake_png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+    monkeypatch.setattr(scaffold_mod, "_render_pdf_page", lambda *a, **kw: fake_png)
+
+    pdf = data_dir / "fake.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    out = data_dir / "floors" / "tlv-floor-5.svg"
+    rc = main(
+        [
+            "floors",
+            "scaffold",
+            "tlv-floor-5",
+            "--pdf",
+            str(pdf),
+            "--page",
+            "1",
+            "--force",  # fixture already has tlv-floor-5.svg
+            "--data-dir",
+            str(data_dir),
+            "--json",
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    item = payload["results"][0]
+    assert item["floor"] == "tlv-floor-5"
+    assert item["page"] == 1
+    assert item["bytes"] > 0
+    assert out.is_file()
+    body = out.read_text(encoding="utf-8")
+    assert 'viewBox="0 0 1920 1080"' in body
+    assert "5-T-01" in body
+
+
+def test_floors_scaffold_refuses_overwrite_without_force(
+    data_dir: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from office_cli.floors import _scaffold as scaffold_mod
+
+    monkeypatch.setattr(scaffold_mod, "_render_pdf_page", lambda *a, **kw: b"\x89PNG")
+    pdf = data_dir / "fake.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    rc = main(
+        [
+            "floors",
+            "scaffold",
+            "tlv-floor-5",
+            "--pdf",
+            str(pdf),
+            "--page",
+            "1",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "refusing to overwrite" in err
+
+
+def test_floors_scaffold_unknown_floor_id(
+    data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pdf = data_dir / "fake.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    rc = main(
+        [
+            "floors",
+            "scaffold",
+            "no-such-floor",
+            "--pdf",
+            str(pdf),
+            "--page",
+            "1",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "no-such-floor" in err
+    assert "not declared" in err
+
+
+def test_floors_scaffold_manifest_mode(
+    data_dir: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Manifest mode: one PDF, multiple {id, page} entries."""
+    from office_cli.floors import _scaffold as scaffold_mod
+
+    monkeypatch.setattr(scaffold_mod, "_render_pdf_page", lambda *a, **kw: b"\x89PNG")
+    pdf = data_dir / "fake.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    manifest = data_dir / "boot.yaml"
+    manifest.write_text(
+        f"pdf: {pdf}\nfloors:\n  - {{ id: tlv-floor-5, page: 1 }}\n",
+        encoding="utf-8",
+    )
+    rc = main(
+        [
+            "floors",
+            "scaffold",
+            "--manifest",
+            str(manifest),
+            "--force",
+            "--data-dir",
+            str(data_dir),
+            "--json",
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert len(payload["results"]) == 1
+    assert payload["results"][0]["floor"] == "tlv-floor-5"
+
+
+def test_floors_scaffold_manifest_missing_pdf_field(
+    data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    manifest = data_dir / "boot.yaml"
+    manifest.write_text("floors:\n  - { id: tlv-floor-5, page: 1 }\n", encoding="utf-8")
+    rc = main(
+        [
+            "floors",
+            "scaffold",
+            "--manifest",
+            str(manifest),
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "missing the `pdf:` field" in err
+
+
+def test_floors_scaffold_requires_args_or_manifest(
+    data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc = main(["floors", "scaffold", "--data-dir", str(data_dir)])
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "manifest" in err or "floor id" in err
+
+
+def test_floors_scaffold_ambiguous_floor_id(
+    data_dir: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Qodo PR #56 review: scaffold must refuse to pick when two
+    offices declare the same floor id, the same way validate/doctor do."""
+    from office_cli.floors import _scaffold as scaffold_mod
+
+    monkeypatch.setattr(scaffold_mod, "_render_pdf_page", lambda *a, **kw: b"\x89PNG")
+    yaml_path = data_dir / "data" / "offices.yaml"
+    yaml_path.write_text(
+        yaml_path.read_text(encoding="utf-8")
+        + (
+            "\n  - id: dup\n"
+            "    name: Duplicate Office\n"
+            "    floors:\n"
+            "      - id: tlv-floor-5\n"
+            "        svg: floors/dup.svg\n"
+            "        clusters:\n"
+            "          T: { capacity: 1, type: open-space }\n"
+        ),
+        encoding="utf-8",
+    )
+    (data_dir / "floors" / "dup.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080"/>\n',
+        encoding="utf-8",
+    )
+    pdf = data_dir / "fake.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+
+    rc = main(
+        [
+            "floors",
+            "scaffold",
+            "tlv-floor-5",
+            "--pdf",
+            str(pdf),
+            "--page",
+            "1",
+            "--force",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "ambiguous" in err
+    assert "tlv-floor-5" in err
+
+
+def test_floors_scaffold_out_resolves_against_data_dir(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Qodo PR #56 review: relative --out paths must resolve against
+    --data-dir (not cwd), matching validate/doctor."""
+    from office_cli.floors import _scaffold as scaffold_mod
+
+    monkeypatch.setattr(scaffold_mod, "_render_pdf_page", lambda *a, **kw: b"\x89PNG")
+    pdf = data_dir / "fake.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    # Run from an unrelated cwd so a cwd-relative resolution would
+    # land somewhere else.
+    other = data_dir.parent / "elsewhere"
+    other.mkdir()
+    monkeypatch.chdir(other)
+
+    rc = main(
+        [
+            "floors",
+            "scaffold",
+            "tlv-floor-5",
+            "--pdf",
+            str(pdf),
+            "--page",
+            "1",
+            "--out",
+            "floors/custom.svg",  # relative
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    assert rc == 0
+    # Resolved against data_dir, not cwd:
+    assert (data_dir / "floors" / "custom.svg").is_file()
+    assert not (other / "floors" / "custom.svg").exists()
+
+
+def test_floors_scaffold_manifest_atomicity(
+    data_dir: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Qodo PR #56 review: a manifest with a bad job partway through
+    must not leave files written by earlier jobs. The verb resolves
+    every job before writing any SVG."""
+    from office_cli.floors import _scaffold as scaffold_mod
+
+    monkeypatch.setattr(scaffold_mod, "_render_pdf_page", lambda *a, **kw: b"\x89PNG")
+    pdf = data_dir / "fake.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    manifest = data_dir / "boot.yaml"
+    # First entry is valid; second is unknown — should fail before writing.
+    manifest.write_text(
+        f"pdf: {pdf}\n"
+        "floors:\n"
+        "  - { id: tlv-floor-5, page: 1 }\n"
+        "  - { id: no-such-floor, page: 1 }\n",
+        encoding="utf-8",
+    )
+    floor5_before = (data_dir / "floors" / "tlv-floor-5.svg").read_bytes()
+
+    rc = main(
+        [
+            "floors",
+            "scaffold",
+            "--manifest",
+            str(manifest),
+            "--force",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    assert rc != 0
+    # The valid entry must NOT have been written:
+    assert (data_dir / "floors" / "tlv-floor-5.svg").read_bytes() == floor5_before
