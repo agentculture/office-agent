@@ -125,9 +125,21 @@ def _resolve_targets(
         # First, try the arg as a floor id (`tlv-floor-5`). Operators and
         # agents reach for this form because `office floors list` prints
         # ids, not paths. Issue #51.
-        for path, floor in floor_index.items():
-            if floor.id == args.path:
-                return [path]
+        #
+        # Floor-id uniqueness is enforced within an office by
+        # office_cli/offices/_yaml.py, but NOT globally — two offices
+        # could declare the same floor id. Refuse to pick arbitrarily,
+        # especially because `doctor` mutates in place.
+        id_matches = [path for path, floor in floor_index.items() if floor.id == args.path]
+        if len(id_matches) == 1:
+            return [id_matches[0]]
+        if len(id_matches) > 1:
+            joined = ", ".join(str(p) for p in id_matches)
+            raise OfficeError(
+                code=EXIT_USER_ERROR,
+                message=f"floor id {args.path!r} is ambiguous — matches: {joined}",
+                remediation="pass an explicit SVG path to disambiguate",
+            )
         # Otherwise treat it as a path. Relative paths resolve against the
         # data dir (not cwd) so they line up with floor.svg paths from
         # offices.yaml when --data-dir != $PWD.
@@ -197,7 +209,7 @@ def register(sub: argparse._SubParsersAction) -> None:
     p_val.add_argument(
         "path",
         nargs="?",
-        help="Floor id (e.g. 'tlv-floor-5') or path to a floor SVG.",
+        help="Path to a floor SVG, or a floor id (e.g. 'tlv-floor-5').",
     )
     p_val.add_argument("--all", action="store_true", help="Validate every declared SVG.")
     p_val.add_argument("--json", action="store_true", help=_HELP_JSON)
@@ -216,7 +228,7 @@ def register(sub: argparse._SubParsersAction) -> None:
     p_doc.add_argument(
         "path",
         nargs="?",
-        help="Floor id (e.g. 'tlv-floor-5') or path to a floor SVG.",
+        help="Path to a floor SVG, or a floor id (e.g. 'tlv-floor-5').",
     )
     p_doc.add_argument("--all", action="store_true", help="Doctor every declared SVG.")
     p_doc.add_argument(
