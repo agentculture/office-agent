@@ -103,8 +103,8 @@ def copy_layout(
     dst_root = dst_tree.getroot()
     seats_parent, rooms_parent = _strip_existing_layout(dst_root)
 
-    new_seats = _clone_into(src_seats, seats_parent or dst_root)
-    new_rooms = _clone_into(src_rooms, rooms_parent or dst_root)
+    new_seats = _clone_into(src_seats, seats_parent if seats_parent is not None else dst_root)
+    new_rooms = _clone_into(src_rooms, rooms_parent if rooms_parent is not None else dst_root)
 
     parents = {child: parent for parent in dst_root.iter() for child in parent}
     seat_slots = _seat_ids_for(dst_floor.number, dst_floor.clusters)

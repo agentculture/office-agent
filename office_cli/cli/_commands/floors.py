@@ -14,6 +14,7 @@ from office_cli.floors import (
     Severity,
     copy_layout,
     doctor_svg,
+    is_room_id,
     parse_svg,
     scaffold_svg,
     validate_floor,
@@ -22,6 +23,7 @@ from office_cli.offices import Floor, append_floor_entry, load_offices
 
 _HELP_JSON = "Emit structured JSON."
 _DOCTOR_HINT_THRESHOLD = 3
+_BOOTSTRAP_HINT = "see data/floor-bootstrap.yaml.example"
 
 
 def cmd_list(args: argparse.Namespace) -> int:
@@ -271,7 +273,7 @@ def _scaffold_jobs_from_manifest(
         raise OfficeError(
             code=EXIT_USER_ERROR,
             message=f"manifest must declare a non-empty `floors:` list: {manifest_path}",
-            remediation="see data/floor-bootstrap.yaml.example",
+            remediation=_BOOTSTRAP_HINT,
         )
     _ = data_dir  # currently unused; reserved for relative resolution
     return [_manifest_floor_entry(entry, idx, pdf_path) for idx, entry in enumerate(floors)]
@@ -285,7 +287,7 @@ def _load_manifest(manifest_path: Path) -> dict:
         raise OfficeError(
             code=EXIT_USER_ERROR,
             message=f"manifest not found: {manifest_path}",
-            remediation="check the --manifest path; see data/floor-bootstrap.yaml.example",
+            remediation=f"check the --manifest path; {_BOOTSTRAP_HINT}",
         )
     try:
         raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
@@ -293,20 +295,20 @@ def _load_manifest(manifest_path: Path) -> dict:
         raise OfficeError(
             code=EXIT_USER_ERROR,
             message=f"manifest is not valid YAML: {manifest_path}: {err}",
-            remediation="see data/floor-bootstrap.yaml.example for the expected shape",
+            remediation=f"{_BOOTSTRAP_HINT} for the expected shape",
         ) from err
     if not isinstance(raw, dict):
         raise OfficeError(
             code=EXIT_USER_ERROR,
             message=f"manifest must be a mapping at top-level: {manifest_path}",
-            remediation="see data/floor-bootstrap.yaml.example",
+            remediation=_BOOTSTRAP_HINT,
         )
     return raw
 
 
 def _manifest_pdf_path(raw: dict, manifest_path: Path) -> Path:
     """Pull `pdf:` out of the manifest, resolving relative against the manifest dir."""
-    pdf_field = str(raw.get("pdf", "")).strip()
+    pdf_field = _yaml_str(raw.get("pdf"))
     if not pdf_field:
         raise OfficeError(
             code=EXIT_USER_ERROR,
@@ -327,7 +329,7 @@ def _manifest_floor_entry(entry: object, idx: int, pdf_path: Path) -> tuple[str,
             message=f"manifest floors[{idx}] is not a mapping",
             remediation="each entry needs `id:` and `page:`",
         )
-    fid = str(entry.get("id", "")).strip()
+    fid = _yaml_str(entry.get("id"))
     if not fid:
         raise OfficeError(
             code=EXIT_USER_ERROR,
@@ -447,40 +449,256 @@ def cmd_copy_layout(args: argparse.Namespace) -> int:
 
 
 def cmd_new(args: argparse.Namespace) -> int:
-    """Create a new floor end-to-end: append `offices.yaml` entry,
-    scaffold the SVG, optionally copy layout from an existing floor.
+    """Create a new floor (or many) end-to-end.
 
-    Atomic flow (Qodo PR #57 review): scaffold + copy + validate all
-    happen BEFORE we touch offices.yaml. If anything fails, the only
-    side-effect is a partial SVG at dst_path (rolled back below); the
-    YAML stays untouched so a fresh `floors new` works.
-
-    Decomposed into helpers so cognitive complexity stays under
-    Sonar's S3776 threshold.
+    Single-floor mode: ``floors new <id> --pdf <p> --page <N> [--copy-from SRC]``.
+    Batch mode: ``floors new --manifest <yaml>`` — manifest declares pdf
+    + a list of {id, page} entries, each independently created with
+    per-floor atomicity. Failure of one batch entry doesn't roll back
+    successful entries.
     """
     data_dir = resolve_data_dir(args)
+    if args.manifest:
+        return _run_new_batch(args, data_dir)
+    return _run_new_single(args, data_dir)
+
+
+def _run_new_single(args: argparse.Namespace, data_dir: Path) -> int:
+    if not args.floor_id:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message="pass a floor id or --manifest <yaml>",
+            remediation="example: office floors new tlv-floor-3 --pdf <p> --page 8",
+        )
     offices = load_offices(data_dir)
     office_id = _resolve_new_office(args, offices)
-    _ensure_floor_id_not_declared(args.floor_id, offices)
-
-    floor_index = _index_floors(offices)
-    src_floor, src_path = _resolve_optional_src(args, floor_index)
     pdf_path = _require_pdf(args)
     page = _coerce_page(args.page) if args.page else _require_page(args)
+    src_id = getattr(args, "copy_from", None) or None
 
-    new_entry = _build_floor_entry(args.floor_id, src_floor)
+    actions, warnings, dst_path = _run_one_new(
+        data_dir=data_dir,
+        office_id=office_id,
+        floor_id=args.floor_id,
+        pdf_path=pdf_path,
+        page=page,
+        src_id=src_id,
+    )
+    _emit_new_result(args, office_id, args.floor_id, dst_path, actions, warnings)
+    return 0
+
+
+def _run_new_batch(args: argparse.Namespace, data_dir: Path) -> int:
+    """Create N floors from a manifest. Per-entry atomicity."""
+    jobs = _new_jobs_from_manifest(args, data_dir)
+    results: list[dict] = []
+    any_failed = False
+    for job in jobs:
+        try:
+            actions, warnings, dst_path = _run_one_new(**job)
+            results.append(
+                {
+                    "floor": job["floor_id"],
+                    "office": job["office_id"],
+                    "svg": str(dst_path),
+                    "ok": True,
+                    "actions": actions,
+                    "warnings": [w.to_dict() for w in warnings],
+                }
+            )
+        except OfficeError as err:
+            any_failed = True
+            results.append(
+                {
+                    "floor": job["floor_id"],
+                    "office": job["office_id"],
+                    "ok": False,
+                    "error": err.message,
+                    "remediation": err.remediation,
+                }
+            )
+        except Exception as err:  # noqa: BLE001 — Qodo PR #58: keep per-entry isolation
+            # Catch unexpected errors (OSError on write, ET.ParseError on
+            # corrupt PDF, KeyError from a malformed manifest field, etc.)
+            # so a single bad entry doesn't terminate the whole batch
+            # with a traceback.
+            any_failed = True
+            results.append(
+                {
+                    "floor": job["floor_id"],
+                    "office": job["office_id"],
+                    "ok": False,
+                    "error": f"{type(err).__name__}: {err}",
+                    "remediation": "(unexpected error — see traceback in stderr if needed)",
+                }
+            )
+            # Re-fetch offices.yaml for the next iteration so duplicate-id
+            # checks see entries we successfully appended above.
+            # (load_offices is called inside _run_one_new -> implicit reload.)
+    _emit_batch_result(args, results)
+    return EXIT_USER_ERROR if any_failed else 0
+
+
+def _run_one_new(
+    *,
+    data_dir: Path,
+    office_id: str,
+    floor_id: str,
+    pdf_path: Path,
+    page,
+    src_id: str | None,
+) -> tuple[list[str], list, Path]:
+    """Single-floor create: build entry, render, copy, validate, append YAML.
+
+    Refuses up front if the floor id is already declared anywhere in
+    offices.yaml. Resolves ``src_id`` (if any) from the current
+    offices state — re-loaded on every call so batch mode sees
+    floors created earlier in the same run as candidate copy
+    sources. Uses the PR-C `_render_and_validate` flow for full
+    per-floor atomicity.
+    """
+    offices = load_offices(data_dir)
+    _ensure_floor_id_not_declared(floor_id, offices)
+    src_floor, src_path = _resolve_src_id(src_id, offices)
+    new_entry = _build_floor_entry(floor_id, src_floor)
     dst_path = data_dir / new_entry["svg"]
     _ensure_dst_unused(dst_path)
-    synthetic_floor = _synth_floor(args.floor_id, dst_path, new_entry)
-
+    synthetic_floor = _synth_floor(floor_id, dst_path, new_entry)
     actions, warnings = _render_and_validate(
         synthetic_floor, dst_path, pdf_path, page, src_floor, src_path
     )
     yaml_path = data_dir / "data" / "offices.yaml"
     append_floor_entry(yaml_path, office_id, new_entry)
-    actions.append(f"appended {args.floor_id} under office {office_id}")
-    _emit_new_result(args, office_id, args.floor_id, dst_path, actions, warnings)
-    return 0
+    actions.append(f"appended {floor_id} under office {office_id}")
+    return actions, warnings, dst_path
+
+
+def _resolve_src_id(src_id: str | None, offices: dict) -> tuple[Floor | None, Path | None]:
+    """Resolve a copy-from floor id against the current offices state."""
+    if not src_id:
+        return None, None
+    return _resolve_scaffold_floor(src_id, _index_floors(offices))
+
+
+def _new_jobs_from_manifest(args: argparse.Namespace, data_dir: Path) -> list[dict]:
+    """Parse a manifest into a list of `_run_one_new` kwargs dicts."""
+    manifest_path = Path(args.manifest).expanduser()
+    raw = _load_manifest(manifest_path)
+    pdf_path = _manifest_pdf_path(raw, manifest_path)
+    offices = load_offices(data_dir)
+    floor_index = _index_floors(offices)
+    office_id = _resolve_manifest_office(args, raw, offices)
+    default_copy_from = getattr(args, "copy_from", None) or _yaml_str(raw.get("copy_from")) or None
+    floors = raw.get("floors") or []
+    if not isinstance(floors, list) or not floors:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"manifest must declare a non-empty `floors:` list: {manifest_path}",
+            remediation=_BOOTSTRAP_HINT,
+        )
+    return [
+        _build_new_job(entry, idx, pdf_path, office_id, default_copy_from, floor_index, data_dir)
+        for idx, entry in enumerate(floors)
+    ]
+
+
+def _build_new_job(
+    entry: object,
+    idx: int,
+    pdf_path: Path,
+    office_id: str,
+    default_copy_from: str | None,
+    floor_index: dict[Path, Floor],
+    data_dir: Path,
+) -> dict:
+    """Validate one manifest entry; return kwargs for `_run_one_new`.
+
+    Note: ``copy_from`` is stored as the source floor id (string),
+    NOT resolved to a Floor here. Resolution is deferred to
+    `_run_one_new` so a bad copy_from in entry N fails just that
+    entry, not the whole batch.
+    """
+    _ = floor_index  # reserved; per-entry code re-resolves from fresh offices
+    if not isinstance(entry, dict):
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"manifest floors[{idx}] is not a mapping",
+            remediation="each entry needs `id:` and `page:`",
+        )
+    fid = _yaml_str(entry.get("id"))
+    if not fid:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"manifest floors[{idx}] is missing `id:`",
+            remediation="add `id: <floor-id>`",
+        )
+    page_raw = entry.get("page")
+    if page_raw is None or page_raw == "":
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"manifest floors[{idx}] (id={fid!r}) is missing `page:`",
+            remediation="add `page: <N>` or `page: '<label>'`",
+        )
+    per_entry_src = _yaml_str(entry.get("copy_from")) if "copy_from" in entry else ""
+    src_id = per_entry_src or default_copy_from or None
+    return {
+        "data_dir": data_dir,
+        "office_id": office_id,
+        "floor_id": fid,
+        "pdf_path": pdf_path,
+        "page": _coerce_page(page_raw),
+        "src_id": src_id,
+    }
+
+
+def _resolve_manifest_office(args: argparse.Namespace, raw: dict, offices: dict) -> str:
+    """CLI flag > manifest field > single-office auto-detect."""
+    if args.office:
+        if args.office not in offices:
+            known = ", ".join(sorted(offices.keys()))
+            raise OfficeError(
+                code=EXIT_USER_ERROR,
+                message=f"unknown office: {args.office!r}",
+                remediation=f"known offices: {known or '(none)'}",
+            )
+        return args.office
+    yaml_office = _yaml_str(raw.get("office"))
+    if yaml_office:
+        if yaml_office not in offices:
+            known = ", ".join(sorted(offices.keys()))
+            raise OfficeError(
+                code=EXIT_USER_ERROR,
+                message=f"manifest references unknown office: {yaml_office!r}",
+                remediation=f"known offices: {known or '(none)'}",
+            )
+        return yaml_office
+    if len(offices) == 1:
+        return next(iter(offices))
+    known = ", ".join(sorted(offices.keys()))
+    raise OfficeError(
+        code=EXIT_USER_ERROR,
+        message="multiple offices declared; manifest needs `office:` or pass --office",
+        remediation=f"add `office: <id>` to the manifest top-level (known: {known})",
+    )
+
+
+def _emit_batch_result(args: argparse.Namespace, results: list[dict]) -> None:
+    if args.json:
+        emit_result({"results": results}, json_mode=True)
+        return
+    ok_count = sum(1 for r in results if r["ok"])
+    fail_count = len(results) - ok_count
+    emit_result(
+        f"batch: {ok_count} ok, {fail_count} failed (of {len(results)})",
+        json_mode=False,
+    )
+    for r in results:
+        if r["ok"]:
+            emit_diagnostic(f"  OK   {r['floor']} ({r['svg']})")
+        else:
+            emit_diagnostic(f"  FAIL {r['floor']}: {r['error']}")
+            if r.get("remediation"):
+                emit_diagnostic(f"       hint: {r['remediation']}")
 
 
 def _ensure_dst_unused(dst_path: Path) -> None:
@@ -681,20 +899,59 @@ def _require_page(args: argparse.Namespace) -> int | str:
     return _coerce_page(args.page)
 
 
+def _yaml_str(value: object) -> str:
+    """Coerce a YAML-loaded value to a stripped string.
+
+    Critical detail: YAML's ``null`` (or a missing key with a ``None``
+    fallback) loads as Python ``None`` — and ``str(None) == 'None'``,
+    which is truthy. Without this helper, ``copy_from: null`` /
+    ``office: null`` / ``pdf: null`` would each silently become the
+    literal string ``"None"`` and produce confusing downstream errors
+    ("unknown office: 'None'" rather than "missing field"). Qodo PR #58.
+    """
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _retarget_room_id(rid: str, dst_floor_num: str) -> str:
+    """Replace the floor prefix in a `<floor>.<NN>` room id.
+
+    ``5.18`` (floor-5 stencil) → ``3.18`` (floor-3 destination).
+    Non-conforming ids (custom strings, legacy formats) pass through
+    unchanged so we never mangle data we don't recognize.
+    """
+    if not is_room_id(rid):
+        return rid
+    suffix = rid.split(".", 1)[1]
+    return f"{dst_floor_num}.{suffix}"
+
+
 def _build_floor_entry(floor_id: str, src_floor: Floor | None) -> dict:
     """Shape the dict consumed by ``append_floor_entry``.
 
     Inherits cluster + room spec from ``src_floor`` when given (so a
     --copy-from creates an offices.yaml entry that fits the source's
     layout). Without it, falls back to a placeholder T:1 cluster.
+
+    Room ids are **retargeted** to the destination floor's number so
+    that copying floor-5's ``5.18`` produces floor-3's ``3.18``,
+    matching the architect's per-floor numbering convention. Seats
+    don't need this here — they're renumbered later by ``copy_layout``
+    via ``_seat_ids_for(dst_floor.number, ...)``.
     """
+    dst_num = floor_id.rsplit("-", 1)[-1]
     if src_floor is not None:
         clusters = {
             letter: {"capacity": cluster.capacity, "type": cluster.type}
             for letter, cluster in src_floor.clusters.items()
         }
         rooms = {
-            rid: {"name": r.name, "type": r.type, "capacity": r.capacity}
+            _retarget_room_id(rid, dst_num): {
+                "name": r.name,
+                "type": r.type,
+                "capacity": r.capacity,
+            }
             for rid, r in src_floor.rooms.items()
         }
     else:
@@ -995,7 +1252,15 @@ def register(sub: argparse._SubParsersAction) -> None:
             "optionally overlays seats+rooms from an existing floor."
         ),
     )
-    p_new.add_argument("floor_id", help="New floor id (e.g. 'tlv-floor-3').")
+    p_new.add_argument(
+        "floor_id",
+        nargs="?",
+        help="New floor id (e.g. 'tlv-floor-3'). Required unless --manifest is passed.",
+    )
+    p_new.add_argument(
+        "--manifest",
+        help="Batch mode: YAML manifest with pdf + floors[{id, page}] + optional copy_from.",
+    )
     p_new.add_argument("--pdf", help="Path to the architect's PDF.")
     p_new.add_argument(
         "--page", help="1-based page number, or text label that appears on one page."

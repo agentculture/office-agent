@@ -1,24 +1,28 @@
-# Manifest for `office floors scaffold --manifest` (issue #54).
+# Manifest for batch floor creation. Two verbs accept this file:
 #
-# Maps PDF pages to floor ids declared in offices.yaml. The verb runs
-# once per entry, producing floors/<id>.svg with the chosen PDF page
-# embedded as a raster background plus one example seat + room for the
-# operator to Ctrl+D-duplicate in Inkscape.
+#   office floors scaffold --manifest data/floor-bootstrap.yaml
+#       Requires each id to already be declared in offices.yaml with
+#       at least one cluster. Produces floors/<id>.svg with the
+#       chosen PDF page embedded as a raster background plus one
+#       example seat + room for the operator to Ctrl+D-duplicate
+#       in Inkscape.
 #
-# All floor ids referenced here must already be declared in
-# `data/offices.yaml` with at least one cluster. Use `status: draft`
-# on the offices.yaml entries — the validator skips the cluster-
-# capacity check for drafts and emits a `floor-draft` warning instead.
+#   office floors new --manifest data/floor-bootstrap.yaml
+#       Adds the offices.yaml entry AND scaffolds, for each entry.
+#       Recognises additional fields:
+#         office:     top-level — pick the office (auto-detected
+#                     when offices.yaml has only one).
+#         copy_from:  top-level — applied to every entry; can be
+#                     overridden per-entry. The new floor inherits
+#                     src's cluster + room spec, retargeted to the
+#                     new floor's number (5.18 -> 3.18 etc.).
+#       Per-entry atomicity: if entry N fails, entries 1..N-1 stay.
 #
 # Copy this file to `data/floor-bootstrap.yaml` (git-ignored), point
 # `pdf:` at your architect's PDF, and adjust the `floors:` list to
-# match. Then:
-#
-#     office floors scaffold --manifest data/floor-bootstrap.yaml
-#
-# `pdf:` may be relative to this manifest file. Use ~ for $HOME.
-# `page:` is either a 1-based int or a string label that appears
-# verbatim on exactly one page (resolved via pdftotext).
+# match. `pdf:` may be relative to this manifest file. `page:` is
+# either a 1-based int or a string label that appears verbatim on
+# exactly one page (resolved via pdftotext).
 
 pdf: <path-to-architects.pdf>
 
@@ -31,3 +35,15 @@ floors:
   # on exactly one page, otherwise the verb errors with a candidate
   # listing.
   - { id: <office>-floor-12, page: "12th Floor" }
+
+# --- Example for `office floors new --manifest` ---
+# Uncomment + adapt; this section is illustrative only.
+#
+# pdf: ~/Downloads/architects-plan.pdf
+# office: tlv
+# copy_from: tlv-floor-5      # stencil for every entry
+# floors:
+#   - { id: tlv-floor-2,  page: 7  }
+#   - { id: tlv-floor-3,  page: 8  }
+#   - { id: tlv-floor-4,  page: 9  }
+#   - { id: tlv-floor-12, page: 14, copy_from: tlv-floor-3 }

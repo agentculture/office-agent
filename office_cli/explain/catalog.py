@@ -290,20 +290,46 @@ floor's layout.
 
 ## Usage
 
+    # Single-floor
     office floors new tlv-floor-3 --pdf <path> --page 8
     office floors new tlv-floor-3 --pdf <path> --page 8 --copy-from tlv-floor-5
     office floors new fc-floor-6 --pdf <path> --page 2 --office fc
 
+    # Batch (one PDF, many floors, optional shared copy-from stencil)
+    office floors new --manifest data/floor-bootstrap.yaml
+
 ## Flags
 
-- `--pdf PATH` — required. Architect's PDF.
-- `--page N|LABEL` — required. 1-based page number or string label.
+- `--pdf PATH` — required in single-floor mode. Architect's PDF.
+- `--page N|LABEL` — required in single-floor mode. 1-based page
+  number or string label.
 - `--office ID` — required when offices.yaml has multiple offices;
   auto-detected for single-office configurations.
 - `--copy-from SRC` — existing floor id whose cluster spec, room
   declarations, and SVG layout get inherited. The new floor ends up
-  with the same number of seats and rooms as `SRC`, just renumbered
-  for the new floor (e.g. `5-T-01` -> `3-T-01`).
+  with the same number of seats and rooms as `SRC`, just retargeted
+  for the new floor: seat ids `5-T-01` -> `3-T-01`, room ids
+  `5.18` -> `3.18`. Geometry (positions, sizes) carries over verbatim.
+- `--manifest PATH` — batch mode. See "Manifest shape" below.
+
+## Manifest shape (batch mode)
+
+    pdf: <path-to-architects.pdf>
+    office: tlv                  # optional, auto-detected if single
+    copy_from: tlv-floor-5       # optional default, applied to every entry
+    floors:
+      - { id: tlv-floor-2,  page: 7  }
+      - { id: tlv-floor-3,  page: 8  }
+      - { id: tlv-floor-12, page: 14 }
+      - { id: tlv-floor-14, page: 15, copy_from: tlv-floor-12 }   # per-entry override
+
+Each entry is its own transaction (per-floor atomicity): if entry N
+fails (poppler error, unknown copy_from, validation error), the
+verb rolls back any partial SVG for that entry but **leaves earlier
+successful entries intact**. Final exit is non-zero if any entry
+failed; the report (text + JSON) lists per-entry status. Successful
+entries become candidate copy-from sources for later entries in
+the same run, since `offices.yaml` is reloaded per entry.
 
 ## Output
 
@@ -317,7 +343,7 @@ floor's layout.
 ## Refusals
 
 - Floor id already declared anywhere in offices.yaml.
-- Multiple offices declared and no `--office` flag.
+- Multiple offices declared and no `--office` (CLI or manifest).
 - PDF, page, or `--copy-from` source missing.
 
 ## Next steps
