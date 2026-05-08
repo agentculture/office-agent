@@ -103,6 +103,26 @@ python3 .claude/skills/version-bump/scripts/bump.py patch
 - **PyPI Trusted Publishing** via `.github/workflows/publish.yml`. The `version-check` CI job enforces a per-PR version bump against `origin/main`.
 - **Keep a Changelog** format in `CHANGELOG.md`; the `version-bump` skill prepends entries automatically.
 
+## SonarCloud guidance
+
+Sonar **S5332** ("HTTP URL — should use HTTPS") flags the SVG namespace
+URI in `office_cli/floors/_doctor.py`:
+
+```python
+ET.register_namespace("", "http://www.w3.org/2000/svg")
+```
+
+This is a **known false positive**. The string is the W3C **XML
+namespace identifier** for SVG — not a fetched URL. The literal
+`http://www.w3.org/2000/svg` is the value SVG renderers (browsers,
+xmllint, Inkscape) recognize; rewriting it to `https://...` produces
+a different, unrecognized namespace. Removing the
+`register_namespace` call makes ElementTree emit
+`<ns0:svg xmlns:ns0="...">` at the root, which browsers reject as
+"not a valid SVG document" — confirmed via the floor-5 walkthrough
+(PR #50 review removed it; PR #53 restored it). Mark the hotspot
+SAFE on Sonar with this rationale; do **not** "fix" it in code.
+
 ## Skills convention
 
 `.claude/skills/<name>/` — each skill must have:

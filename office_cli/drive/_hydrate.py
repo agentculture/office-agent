@@ -36,6 +36,7 @@ from typing import Callable, Optional
 import yaml
 
 from office_cli.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, OfficeError
+from office_cli.cli._output import emit_diagnostic
 from office_cli.drive._cache import CacheMeta
 from office_cli.drive._client import DriveClient, DriveEntry, GoogleDriveClient
 
@@ -186,8 +187,22 @@ def _hydrate_office(
         )
     folder_entry = _match_office_folder(folders_by_name, oid)
     floor_entries = drive.list_folder(folder_entry.id)
-    files_by_name = _group_by_name(floor_entries, lambda e: not e.is_folder)
     floors_raw = office.get("floors") or []
+    if not floor_entries and floors_raw:
+        # Issue #54: when corp Workspaces enforce per-file external-share
+        # ACLs, sharing only the parent folder leaves files invisible to
+        # the SA. Drive returns [] (not 403), so the symptom looks like
+        # an empty folder. Surface a hint before we hit the missing-SVG
+        # error from _resolve_unique_file.
+        emit_diagnostic(
+            f"warning: office folder {folder_entry.name!r} (Drive id "
+            f"{folder_entry.id}) lists empty, but offices.yaml declares "
+            f"{len(floors_raw)} floor(s) under it. Some Google Workspaces "
+            "do not propagate folder-share to files uploaded by another "
+            "account; share each file with the service account, or share "
+            "the folder before uploading."
+        )
+    files_by_name = _group_by_name(floor_entries, lambda e: not e.is_folder)
     rewritten: list[object] = []
     for fidx, floor in enumerate(floors_raw):
         rewritten.append(

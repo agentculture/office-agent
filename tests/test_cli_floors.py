@@ -254,3 +254,94 @@ def test_floors_validate_requires_target(
     assert rc == 1
     err = capsys.readouterr().err
     assert "pass an SVG path" in err or "--all" in err
+
+
+def test_floors_refresh_when_cache_absent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #54: refresh is idempotent — succeeds even if the cache
+    was never created. Operators run it as a precaution."""
+    cache = tmp_path / "drive-cache"
+    monkeypatch.setenv("OFFICE_DRIVE_CACHE_DIR", str(cache))
+    rc = main(["floors", "refresh", "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["removed"] is False
+    assert payload["cache_dir"] == str(cache)
+
+
+def test_floors_refresh_removes_existing_cache(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cache = tmp_path / "drive-cache"
+    (cache / "data").mkdir(parents=True)
+    (cache / "data" / "offices.yaml").write_text("offices: []\n", encoding="utf-8")
+    monkeypatch.setenv("OFFICE_DRIVE_CACHE_DIR", str(cache))
+
+    rc = main(["floors", "refresh", "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["removed"] is True
+    assert not cache.exists()
+
+
+def test_floors_validate_suggests_doctor_on_ctrld_cascade(
+    data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Issue #54: when ≥3 seat-id-format errors share a prefix, the
+    text output includes a hint pointing at `office floors doctor`.
+    The cascade pattern is the operator's most common reason for
+    invalid seat ids."""
+    polluted = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080">\n'
+        # Five Ctrl+D-cascade ids — all share the `5-T-` prefix but
+        # fail the seat-id-format regex.
+        '<rect id="5-T-06-7-2" class="seat" x="100" y="100" width="51" height="25"/>\n'
+        '<rect id="5-T-06-7-4" class="seat" x="160" y="100" width="51" height="25"/>\n'
+        '<rect id="5-T-06-7-0" class="seat" x="220" y="100" width="51" height="25"/>\n'
+        '<rect id="5-T-06-7-1" class="seat" x="280" y="100" width="51" height="25"/>\n'
+        '<rect id="5-T-06-7-3" class="seat" x="340" y="100" width="51" height="25"/>\n'
+        "</svg>\n"
+    )
+    svg_path = data_dir / "floors" / "tlv-floor-5.svg"
+    svg_path.write_text(polluted, encoding="utf-8")
+
+    rc = main(["floors", "validate", "tlv-floor-5", "--data-dir", str(data_dir)])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "office floors doctor tlv-floor-5" in err
+    assert "5-T-" in err
+
+
+def test_floors_validate_no_doctor_hint_on_clean_file(
+    data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Clean files must not get a doctor hint — would be noise."""
+    rc = main(["floors", "validate", "tlv-floor-5", "--data-dir", str(data_dir)])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "office floors doctor" not in err
+
+
+def test_floors_validate_doctor_hint_in_json(
+    data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """JSON output exposes the same hint via `doctor_hint` so agents
+    can branch on it programmatically."""
+    polluted = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080">\n'
+        '<rect id="5-T-06-7-2" class="seat" x="100" y="100" width="51" height="25"/>\n'
+        '<rect id="5-T-06-7-4" class="seat" x="160" y="100" width="51" height="25"/>\n'
+        '<rect id="5-T-06-7-0" class="seat" x="220" y="100" width="51" height="25"/>\n'
+        "</svg>\n"
+    )
+    svg_path = data_dir / "floors" / "tlv-floor-5.svg"
+    svg_path.write_text(polluted, encoding="utf-8")
+
+    rc = main(["floors", "validate", "tlv-floor-5", "--json", "--data-dir", str(data_dir)])
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    hint = payload["results"][0]["doctor_hint"]
+    assert "office floors doctor tlv-floor-5" in hint
