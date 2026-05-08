@@ -143,6 +143,110 @@ def test_floors_doctor_writes_and_validate_passes(
     assert result["errors"] == []
 
 
+def test_floors_validate_by_id(data_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Issue #51: passing a floor id (no path) resolves against
+    offices.yaml, not as a relative path."""
+    rc = main(["floors", "validate", "tlv-floor-5", "--json", "--data-dir", str(data_dir)])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    result = payload["results"][0]
+    assert result["floor"] == "tlv-floor-5"
+    assert result["ok"] is True
+
+
+def test_floors_doctor_by_id(data_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """`office floors doctor tlv-floor-5 --dry-run` works the same as
+    the path form."""
+    rc = main(
+        [
+            "floors",
+            "doctor",
+            "tlv-floor-5",
+            "--dry-run",
+            "--json",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    result = payload["results"][0]
+    assert result["floor"] == "tlv-floor-5"
+    assert result["dry_run"] is True
+
+
+def test_floors_validate_path_form_still_works(
+    data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Path-form invocations with the .svg suffix don't accidentally
+    match a floor id (defensive against future ids that look like paths)."""
+    rc = main(
+        [
+            "floors",
+            "validate",
+            "floors/tlv-floor-5.svg",
+            "--json",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["results"][0]["ok"] is True
+
+
+def test_floors_validate_ambiguous_id_raises(
+    data_dir: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Floor id uniqueness is enforced within an office, not globally.
+    If two offices declare the same id, the resolver must refuse to pick
+    arbitrarily — especially important for `doctor`, which mutates in
+    place. Qodo PR-#52 review."""
+    # Stage a second office in offices.yaml that re-uses `tlv-floor-5`.
+    yaml_path = data_dir / "data" / "offices.yaml"
+    appended = yaml_path.read_text(encoding="utf-8") + (
+        "\n  - id: dup\n"
+        "    name: Duplicate Office\n"
+        "    floors:\n"
+        "      - id: tlv-floor-5\n"
+        "        svg: floors/dup.svg\n"
+        "        clusters:\n"
+        "          T: { capacity: 1, type: open-space }\n"
+    )
+    yaml_path.write_text(appended, encoding="utf-8")
+    # The dup SVG just needs to exist; content doesn't matter for resolver test.
+    (data_dir / "floors" / "dup.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080"/>\n',
+        encoding="utf-8",
+    )
+
+    rc = main(["floors", "validate", "tlv-floor-5", "--json", "--data-dir", str(data_dir)])
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "ambiguous" in err
+    assert "tlv-floor-5" in err
+
+
+def test_floors_validate_unknown_id_falls_back_to_path(
+    data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Unknown id falls through to path resolution; the resulting error
+    is the existing 'not declared in offices.yaml' message — unchanged."""
+    rc = main(
+        [
+            "floors",
+            "validate",
+            "no-such-floor",
+            "--json",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "not declared in offices.yaml" in err
+
+
 def test_floors_validate_requires_target(
     data_dir: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] - 2026-05-08
+
+### Added
+
+- `office floors validate` and `office floors doctor` accept a floor id (e.g. `tlv-floor-5`) as their positional argument, falling back to the existing path resolution when the arg doesn't match a declared id. ([#51](https://github.com/agentculture/office-agent/issues/51))
+
 ## [0.11.0] - 2026-05-08
 
 ### Added

@@ -149,9 +149,14 @@ Errors fail the run with exit code 1; warnings do not.
 
 ## Usage
 
+    office floors validate tlv-floor-5
     office floors validate floors/tlv-floor-5.svg
     office floors validate --all
     office floors validate --all --json
+
+A bare argument is tried first as a floor id (matched against
+`offices.yaml`), then falls back to a path resolved against the
+data dir.
 
 ## Output
 
@@ -169,10 +174,15 @@ file passes `office floors validate`.
 
 ## Usage
 
+    office floors doctor tlv-floor-5
+    office floors doctor tlv-floor-5 --dry-run
     office floors doctor floors/tlv-floor-5.svg
-    office floors doctor floors/tlv-floor-5.svg --dry-run
     office floors doctor --all
-    office floors doctor floors/tlv-floor-5.svg --json
+    office floors doctor tlv-floor-5 --json
+
+A bare argument is tried first as a floor id (matched against
+`offices.yaml`), then falls back to a path resolved against the
+data dir.
 
 ## What it does (in order)
 
