@@ -10,7 +10,7 @@ from pathlib import Path
 from office_cli._config import add_data_dir_arg, drive_cache_root, resolve_data_dir
 from office_cli.cli._errors import EXIT_USER_ERROR, OfficeError
 from office_cli.cli._output import emit_diagnostic, emit_result
-from office_cli.floors import Severity, doctor_svg, parse_svg, validate_floor
+from office_cli.floors import Severity, doctor_svg, parse_svg, scaffold_svg, validate_floor
 from office_cli.offices import Floor, load_offices
 
 _HELP_JSON = "Emit structured JSON."
@@ -152,6 +152,195 @@ def _ensure_safe_cache_path(cache_dir: Path) -> None:
                 "office-cli-named directory"
             ),
         )
+
+
+def cmd_scaffold(args: argparse.Namespace) -> int:
+    """Generate a placeholder SVG (embedded PDF page + 1 example seat +
+    1 example room) for a declared floor. Issue #54.
+
+    Two modes:
+
+    - **Single**: ``office floors scaffold <floor-id> --pdf <p> --page <N>``.
+    - **Manifest**: ``office floors scaffold --manifest <yaml>``. The
+      manifest declares ``pdf:`` (one path used for all entries) and a
+      list of ``{id, page}`` pairs.
+
+    Refuses to overwrite an existing SVG without ``--force``.
+    """
+    data_dir = resolve_data_dir(args)
+    floor_index = _index_floors(load_offices(data_dir))
+    by_id = {floor.id: (path, floor) for path, floor in floor_index.items()}
+    jobs = _scaffold_jobs(args, data_dir)
+    payload: list[dict[str, object]] = []
+    for floor_id, pdf_path, page in jobs:
+        match = by_id.get(floor_id)
+        if match is None:
+            raise OfficeError(
+                code=EXIT_USER_ERROR,
+                message=f"floor id {floor_id!r} is not declared in offices.yaml",
+                remediation=(
+                    "add a floors entry for this id (status: draft is fine) "
+                    "with at least one cluster, then re-run scaffold"
+                ),
+            )
+        existing_path, floor = match
+        out_path = _scaffold_out_path(args, floor_id, existing_path)
+        if out_path.exists() and not args.force:
+            raise OfficeError(
+                code=EXIT_USER_ERROR,
+                message=f"refusing to overwrite existing SVG: {out_path}",
+                remediation="pass --force to overwrite, or remove the file first",
+            )
+        svg_bytes = scaffold_svg(floor=floor, pdf=pdf_path, page=page)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(svg_bytes)
+        payload.append(
+            {
+                "floor": floor_id,
+                "svg": str(out_path),
+                "pdf": str(pdf_path),
+                "page": page,
+                "bytes": len(svg_bytes),
+            }
+        )
+    if args.json:
+        emit_result({"results": payload}, json_mode=True)
+    else:
+        for item in payload:
+            emit_result(
+                f"OK   {item['floor']} ({item['svg']}) "
+                f"<- {item['pdf']} page {item['page']} "
+                f"[{item['bytes']} bytes]",
+                json_mode=False,
+            )
+    return 0
+
+
+def _scaffold_jobs(args: argparse.Namespace, data_dir: Path) -> list[tuple[str, Path, int | str]]:
+    """Resolve `--manifest` or single-floor flags into a job list."""
+    if args.manifest:
+        return _scaffold_jobs_from_manifest(Path(args.manifest).expanduser(), data_dir)
+    if not args.floor_id:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message="pass a floor id or --manifest <yaml>",
+            remediation="example: office floors scaffold tlv-floor-3 --pdf <pdf> --page 8",
+        )
+    if not args.pdf:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message="--pdf is required in single-floor mode",
+            remediation="pass --pdf <path-to-architects.pdf>",
+        )
+    if not args.page:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message="--page is required in single-floor mode",
+            remediation="pass --page <N> (1-based) or --page <label>",
+        )
+    return [(args.floor_id, Path(args.pdf).expanduser(), _coerce_page(args.page))]
+
+
+def _scaffold_jobs_from_manifest(
+    manifest_path: Path, data_dir: Path
+) -> list[tuple[str, Path, int | str]]:
+    """Parse the manifest YAML; raise on shape errors."""
+    import yaml
+
+    if not manifest_path.is_file():
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"manifest not found: {manifest_path}",
+            remediation="check the --manifest path; see data/floor-bootstrap.yaml.example",
+        )
+    try:
+        raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as err:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"manifest is not valid YAML: {manifest_path}: {err}",
+            remediation="see data/floor-bootstrap.yaml.example for the expected shape",
+        ) from err
+    if not isinstance(raw, dict):
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"manifest must be a mapping at top-level: {manifest_path}",
+            remediation="see data/floor-bootstrap.yaml.example",
+        )
+    pdf_field = str(raw.get("pdf", "")).strip()
+    if not pdf_field:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"manifest is missing the `pdf:` field: {manifest_path}",
+            remediation="add `pdf: <path-to-architects.pdf>` at the top",
+        )
+    pdf_path = Path(pdf_field).expanduser()
+    if not pdf_path.is_absolute():
+        pdf_path = (manifest_path.parent / pdf_path).resolve()
+    floors = raw.get("floors") or []
+    if not isinstance(floors, list) or not floors:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"manifest must declare a non-empty `floors:` list: {manifest_path}",
+            remediation="see data/floor-bootstrap.yaml.example",
+        )
+    jobs: list[tuple[str, Path, int | str]] = []
+    for idx, entry in enumerate(floors):
+        if not isinstance(entry, dict):
+            raise OfficeError(
+                code=EXIT_USER_ERROR,
+                message=f"manifest floors[{idx}] is not a mapping",
+                remediation="each entry needs `id:` and `page:`",
+            )
+        fid = str(entry.get("id", "")).strip()
+        page = entry.get("page")
+        if not fid:
+            raise OfficeError(
+                code=EXIT_USER_ERROR,
+                message=f"manifest floors[{idx}] is missing `id:`",
+                remediation="add `id: <floor-id>`",
+            )
+        if page is None or page == "":
+            raise OfficeError(
+                code=EXIT_USER_ERROR,
+                message=f"manifest floors[{idx}] (id={fid!r}) is missing `page:`",
+                remediation="add `page: <N>` or `page: '<label>'`",
+            )
+        jobs.append((fid, pdf_path, _coerce_page(page)))
+    _ = data_dir  # currently unused; reserved for relative resolution
+    return jobs
+
+
+def _coerce_page(page: object) -> int | str:
+    """YAML loads ``page: 8`` as int and ``page: "Fifth Floor"`` as str.
+
+    Pass-through with an explicit non-empty check.
+    """
+    if isinstance(page, bool):
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"page must be an int or string label; got bool {page!r}",
+            remediation="pass --page <N> or --page '<label>'",
+        )
+    if isinstance(page, int):
+        return page
+    if isinstance(page, str):
+        s = page.strip()
+        if s.isdigit():
+            return int(s)
+        return s
+    raise OfficeError(
+        code=EXIT_USER_ERROR,
+        message=f"page must be an int or string label; got {type(page).__name__}",
+        remediation="pass --page <N> or --page '<label>'",
+    )
+
+
+def _scaffold_out_path(args: argparse.Namespace, floor_id: str, existing: Path) -> Path:
+    """Default to the existing SVG path from offices.yaml; honor --out."""
+    if getattr(args, "out", None):
+        return Path(args.out).expanduser().resolve()
+    return existing
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -373,6 +562,42 @@ def register(sub: argparse._SubParsersAction) -> None:
     p_doc.add_argument("--json", action="store_true", help=_HELP_JSON)
     add_data_dir_arg(p_doc)
     p_doc.set_defaults(func=cmd_doctor)
+
+    p_scaff = inner.add_parser(
+        "scaffold",
+        help="Generate a placeholder SVG (PDF page + 1 example seat + 1 example room).",
+        description=(
+            "Build a floor scaffold for a declared floor: 1920x1080 viewBox, "
+            "embedded PNG of the chosen PDF page, plus one example "
+            "<rect class='seat'> and one <polygon class='room'> for the operator "
+            "to Ctrl+D-duplicate in Inkscape. The floor must be declared in "
+            "offices.yaml (with at least one cluster) before scaffolding."
+        ),
+    )
+    p_scaff.add_argument(
+        "floor_id",
+        nargs="?",
+        help="Floor id from offices.yaml (e.g. 'tlv-floor-3').",
+    )
+    p_scaff.add_argument("--pdf", help="Path to the architect's PDF.")
+    p_scaff.add_argument(
+        "--page", help="1-based page number, or text label that appears on one page."
+    )
+    p_scaff.add_argument(
+        "--out", help="Output SVG path (default: floors/<floor-id>.svg from offices.yaml)."
+    )
+    p_scaff.add_argument(
+        "--manifest",
+        help="Batch mode: path to a YAML manifest with `pdf:` + `floors: [{id, page}]`.",
+    )
+    p_scaff.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing SVG. Without this, the verb refuses to clobber.",
+    )
+    p_scaff.add_argument("--json", action="store_true", help=_HELP_JSON)
+    add_data_dir_arg(p_scaff)
+    p_scaff.set_defaults(func=cmd_scaffold)
 
     p_ref = inner.add_parser(
         "refresh",

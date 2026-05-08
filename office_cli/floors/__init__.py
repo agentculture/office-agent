@@ -10,6 +10,7 @@ from office_cli.floors._ids import (
     is_seat_id,
     parse_seat_id,
 )
+from office_cli.floors._scaffold import scaffold_svg
 from office_cli.floors._svg import FloorSvg, parse_svg
 from office_cli.floors._validate import Issue, Severity, validate_floor
 
@@ -25,5 +26,6 @@ __all__ = [
     "is_seat_id",
     "parse_seat_id",
     "parse_svg",
+    "scaffold_svg",
     "validate_floor",
 ]

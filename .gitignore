@@ -224,6 +224,14 @@ __marimo__/
 seats/assignments.csv
 seats/audit-log.csv
 
+# Inkscape Save-As leftover (e.g. tlv-floor-5-1.svg, tlv-floor-5-2.svg).
+# Issue #54.
+floors/*-[0-9]*-[0-9]*.svg
+
+# Operator-local scaffold manifest. The committed `.example` is the
+# template; the real one points at the operator's local PDF.
+data/floor-bootstrap.yaml
+
 # Google Sheets service-account key — never commit credentials.
 data/sheets-service-account.json
 data/*-service-account.json

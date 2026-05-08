@@ -388,3 +388,154 @@ def test_floors_validate_doctor_hint_in_json(
     payload = json.loads(capsys.readouterr().out)
     hint = payload["results"][0]["doctor_hint"]
     assert "office floors doctor tlv-floor-5" in hint
+
+
+def test_floors_scaffold_single_mode(
+    data_dir: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Single-floor scaffold writes to floors/<id>.svg with embedded PNG
+    + one example seat + one example room."""
+    from office_cli.floors import _scaffold as scaffold_mod
+
+    fake_png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+    monkeypatch.setattr(scaffold_mod, "_render_pdf_page", lambda *a, **kw: fake_png)
+
+    pdf = data_dir / "fake.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    out = data_dir / "floors" / "tlv-floor-5.svg"
+    rc = main(
+        [
+            "floors",
+            "scaffold",
+            "tlv-floor-5",
+            "--pdf",
+            str(pdf),
+            "--page",
+            "1",
+            "--force",  # fixture already has tlv-floor-5.svg
+            "--data-dir",
+            str(data_dir),
+            "--json",
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    item = payload["results"][0]
+    assert item["floor"] == "tlv-floor-5"
+    assert item["page"] == 1
+    assert item["bytes"] > 0
+    assert out.is_file()
+    body = out.read_text(encoding="utf-8")
+    assert 'viewBox="0 0 1920 1080"' in body
+    assert "5-T-01" in body
+
+
+def test_floors_scaffold_refuses_overwrite_without_force(
+    data_dir: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from office_cli.floors import _scaffold as scaffold_mod
+
+    monkeypatch.setattr(scaffold_mod, "_render_pdf_page", lambda *a, **kw: b"\x89PNG")
+    pdf = data_dir / "fake.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    rc = main(
+        [
+            "floors",
+            "scaffold",
+            "tlv-floor-5",
+            "--pdf",
+            str(pdf),
+            "--page",
+            "1",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "refusing to overwrite" in err
+
+
+def test_floors_scaffold_unknown_floor_id(
+    data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pdf = data_dir / "fake.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    rc = main(
+        [
+            "floors",
+            "scaffold",
+            "no-such-floor",
+            "--pdf",
+            str(pdf),
+            "--page",
+            "1",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "no-such-floor" in err
+    assert "not declared" in err
+
+
+def test_floors_scaffold_manifest_mode(
+    data_dir: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Manifest mode: one PDF, multiple {id, page} entries."""
+    from office_cli.floors import _scaffold as scaffold_mod
+
+    monkeypatch.setattr(scaffold_mod, "_render_pdf_page", lambda *a, **kw: b"\x89PNG")
+    pdf = data_dir / "fake.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    manifest = data_dir / "boot.yaml"
+    manifest.write_text(
+        f"pdf: {pdf}\nfloors:\n  - {{ id: tlv-floor-5, page: 1 }}\n",
+        encoding="utf-8",
+    )
+    rc = main(
+        [
+            "floors",
+            "scaffold",
+            "--manifest",
+            str(manifest),
+            "--force",
+            "--data-dir",
+            str(data_dir),
+            "--json",
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert len(payload["results"]) == 1
+    assert payload["results"][0]["floor"] == "tlv-floor-5"
+
+
+def test_floors_scaffold_manifest_missing_pdf_field(
+    data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    manifest = data_dir / "boot.yaml"
+    manifest.write_text("floors:\n  - { id: tlv-floor-5, page: 1 }\n", encoding="utf-8")
+    rc = main(
+        [
+            "floors",
+            "scaffold",
+            "--manifest",
+            str(manifest),
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "missing the `pdf:` field" in err
+
+
+def test_floors_scaffold_requires_args_or_manifest(
+    data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc = main(["floors", "scaffold", "--data-dir", str(data_dir)])
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "manifest" in err or "floor id" in err

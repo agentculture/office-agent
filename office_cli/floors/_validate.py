@@ -33,7 +33,16 @@ class Issue:
 
 
 def validate_floor(svg: FloorSvg, floor: Floor) -> list[Issue]:
-    """Return a list of issues; empty list means the SVG conforms."""
+    """Return a list of issues; empty list means the SVG conforms.
+
+    A floor with ``status: draft`` (issue #54 scaffold output) skips
+    the cluster-capacity check — by definition the example seat is a
+    placeholder and won't match the declared capacity. The id-format,
+    duplicate, untagged, and view-box checks all still run, so a
+    scaffold with garbled ids still fails. The drop-in replacement is
+    a single ``floor.draft`` warning telling the operator to trace the
+    rest in Inkscape.
+    """
     issues: list[Issue] = []
     issues.extend(_check_view_box(svg))
     issues.extend(_check_duplicates(svg))
@@ -42,7 +51,17 @@ def validate_floor(svg: FloorSvg, floor: Floor) -> list[Issue]:
     for rid in svg.room_ids:
         issues.extend(_check_room(rid, floor))
     issues.extend(_check_untagged(svg))
-    issues.extend(_check_capacity(svg, floor))
+    if floor.status == "draft":
+        issues.append(
+            Issue(
+                Severity.WARNING,
+                "floor-draft",
+                f"floor {floor.id!r} is a scaffold (status: draft); "
+                "trace seats/rooms in Inkscape and set status: active when complete",
+            )
+        )
+    else:
+        issues.extend(_check_capacity(svg, floor))
     return issues
 
 
