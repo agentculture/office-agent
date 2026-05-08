@@ -122,16 +122,23 @@ def _resolve_targets(
     args: argparse.Namespace, floor_index: dict[Path, Floor], data_dir: Path
 ) -> list[Path]:
     if args.path:
+        # First, try the arg as a floor id (`tlv-floor-5`). Operators and
+        # agents reach for this form because `office floors list` prints
+        # ids, not paths. Issue #51.
+        for path, floor in floor_index.items():
+            if floor.id == args.path:
+                return [path]
+        # Otherwise treat it as a path. Relative paths resolve against the
+        # data dir (not cwd) so they line up with floor.svg paths from
+        # offices.yaml when --data-dir != $PWD.
         p = Path(args.path)
-        # Relative paths resolve against the data dir (not cwd) so they line up
-        # with floor.svg paths from offices.yaml when --data-dir != $PWD.
         return [(p if p.is_absolute() else data_dir / p).resolve()]
     if args.all:
         return sorted(floor_index.keys())
     raise OfficeError(
         code=EXIT_USER_ERROR,
-        message="pass an SVG path or --all",
-        remediation="example: office floors validate floors/tlv-floor-5.svg",
+        message="pass a floor id, an SVG path, or --all",
+        remediation="example: office floors validate tlv-floor-5",
     )
 
 
@@ -187,7 +194,11 @@ def register(sub: argparse._SubParsersAction) -> None:
     p_list.set_defaults(func=cmd_list)
 
     p_val = inner.add_parser("validate", help="Validate one or all floor SVGs.")
-    p_val.add_argument("path", nargs="?", help="Path to a floor SVG.")
+    p_val.add_argument(
+        "path",
+        nargs="?",
+        help="Floor id (e.g. 'tlv-floor-5') or path to a floor SVG.",
+    )
     p_val.add_argument("--all", action="store_true", help="Validate every declared SVG.")
     p_val.add_argument("--json", action="store_true", help=_HELP_JSON)
     add_data_dir_arg(p_val)
@@ -202,7 +213,11 @@ def register(sub: argparse._SubParsersAction) -> None:
             "per the floor's offices.yaml cluster spec."
         ),
     )
-    p_doc.add_argument("path", nargs="?", help="Path to a floor SVG.")
+    p_doc.add_argument(
+        "path",
+        nargs="?",
+        help="Floor id (e.g. 'tlv-floor-5') or path to a floor SVG.",
+    )
     p_doc.add_argument("--all", action="store_true", help="Doctor every declared SVG.")
     p_doc.add_argument(
         "--dry-run",
