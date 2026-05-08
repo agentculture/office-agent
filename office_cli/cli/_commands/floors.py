@@ -250,7 +250,28 @@ def _scaffold_jobs(args: argparse.Namespace, data_dir: Path) -> list[tuple[str, 
 def _scaffold_jobs_from_manifest(
     manifest_path: Path, data_dir: Path
 ) -> list[tuple[str, Path, int | str]]:
-    """Parse the manifest YAML; raise on shape errors."""
+    """Parse the manifest YAML; raise on shape errors.
+
+    Decomposed into small helpers (``_load_manifest``,
+    ``_manifest_pdf_path``, ``_manifest_floor_entry``) so each
+    validation branch lives by itself; keeps cognitive complexity
+    below Sonar's S3776 threshold.
+    """
+    raw = _load_manifest(manifest_path)
+    pdf_path = _manifest_pdf_path(raw, manifest_path)
+    floors = raw.get("floors") or []
+    if not isinstance(floors, list) or not floors:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"manifest must declare a non-empty `floors:` list: {manifest_path}",
+            remediation="see data/floor-bootstrap.yaml.example",
+        )
+    _ = data_dir  # currently unused; reserved for relative resolution
+    return [_manifest_floor_entry(entry, idx, pdf_path) for idx, entry in enumerate(floors)]
+
+
+def _load_manifest(manifest_path: Path) -> dict:
+    """Return the parsed top-level mapping from a manifest YAML."""
     import yaml
 
     if not manifest_path.is_file():
@@ -273,6 +294,11 @@ def _scaffold_jobs_from_manifest(
             message=f"manifest must be a mapping at top-level: {manifest_path}",
             remediation="see data/floor-bootstrap.yaml.example",
         )
+    return raw
+
+
+def _manifest_pdf_path(raw: dict, manifest_path: Path) -> Path:
+    """Pull `pdf:` out of the manifest, resolving relative against the manifest dir."""
     pdf_field = str(raw.get("pdf", "")).strip()
     if not pdf_field:
         raise OfficeError(
@@ -283,38 +309,32 @@ def _scaffold_jobs_from_manifest(
     pdf_path = Path(pdf_field).expanduser()
     if not pdf_path.is_absolute():
         pdf_path = (manifest_path.parent / pdf_path).resolve()
-    floors = raw.get("floors") or []
-    if not isinstance(floors, list) or not floors:
+    return pdf_path
+
+
+def _manifest_floor_entry(entry: object, idx: int, pdf_path: Path) -> tuple[str, Path, int | str]:
+    """Validate one `floors[]` entry; return a job tuple."""
+    if not isinstance(entry, dict):
         raise OfficeError(
             code=EXIT_USER_ERROR,
-            message=f"manifest must declare a non-empty `floors:` list: {manifest_path}",
-            remediation="see data/floor-bootstrap.yaml.example",
+            message=f"manifest floors[{idx}] is not a mapping",
+            remediation="each entry needs `id:` and `page:`",
         )
-    jobs: list[tuple[str, Path, int | str]] = []
-    for idx, entry in enumerate(floors):
-        if not isinstance(entry, dict):
-            raise OfficeError(
-                code=EXIT_USER_ERROR,
-                message=f"manifest floors[{idx}] is not a mapping",
-                remediation="each entry needs `id:` and `page:`",
-            )
-        fid = str(entry.get("id", "")).strip()
-        page = entry.get("page")
-        if not fid:
-            raise OfficeError(
-                code=EXIT_USER_ERROR,
-                message=f"manifest floors[{idx}] is missing `id:`",
-                remediation="add `id: <floor-id>`",
-            )
-        if page is None or page == "":
-            raise OfficeError(
-                code=EXIT_USER_ERROR,
-                message=f"manifest floors[{idx}] (id={fid!r}) is missing `page:`",
-                remediation="add `page: <N>` or `page: '<label>'`",
-            )
-        jobs.append((fid, pdf_path, _coerce_page(page)))
-    _ = data_dir  # currently unused; reserved for relative resolution
-    return jobs
+    fid = str(entry.get("id", "")).strip()
+    if not fid:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"manifest floors[{idx}] is missing `id:`",
+            remediation="add `id: <floor-id>`",
+        )
+    page = entry.get("page")
+    if page is None or page == "":
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"manifest floors[{idx}] (id={fid!r}) is missing `page:`",
+            remediation="add `page: <N>` or `page: '<label>'`",
+        )
+    return (fid, pdf_path, _coerce_page(page))
 
 
 def _coerce_page(page: object) -> int | str:

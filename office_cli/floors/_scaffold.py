@@ -110,7 +110,7 @@ def _resolve_page(pdf: Path, page: int | str) -> int:
     if len(matches) > 1:
         raise OfficeError(
             code=EXIT_USER_ERROR,
-            message=(f"label {label!r} appears on multiple pages of {pdf.name}: " f"{matches}"),
+            message=f"label {label!r} appears on multiple pages of {pdf.name}: {matches}",
             remediation="pass --page <N> with a specific page number to disambiguate",
         )
     return matches[0]
@@ -229,7 +229,7 @@ def _build_svg(floor: Floor, png_bytes: bytes) -> bytes:
             "href": f"data:image/png;base64,{encoded}",
         },
     )
-    cluster_letter = sorted(floor.clusters.keys())[0]
+    cluster_letter = min(floor.clusters.keys())
     seat_id = f"{floor.number}-{cluster_letter}-01"
     ET.SubElement(
         root,
