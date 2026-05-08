@@ -219,9 +219,10 @@ def _renumber_seats_keep_all(
     Returns the post-doctor cluster spec (letter → count).
     """
     default_letter = _default_cluster_letter(floor)
+    declared = set(floor.clusters)
     by_letter: dict[str, list[ET.Element]] = {}
     for el in seats:
-        letter = _detect_cluster_letter(el.get("id") or "", default_letter)
+        letter = _detect_cluster_letter(el.get("id") or "", default_letter, declared=declared)
         by_letter.setdefault(letter, []).append(el)
 
     new_caps: dict[str, int] = {}
@@ -285,15 +286,39 @@ def _renumber_rooms_keep_all(
 
 
 def _default_cluster_letter(floor: Floor) -> str:
-    """First declared cluster letter, or 'T' if none."""
+    """First **declared** cluster letter, or 'T' if none.
+
+    Uses ``next(iter(...))`` rather than alphabetical sort so the
+    docstring matches the behavior — a floor declared as
+    ``Z: 5, T: 3`` defaults to ``Z`` (declaration order), not ``T``
+    (alphabetical). YAML loaders preserve insertion order. Qodo PR #59.
+    """
     if floor.clusters:
-        return min(floor.clusters.keys())
+        return next(iter(floor.clusters))
     return "T"
 
 
-def _detect_cluster_letter(seat_id: str, default_letter: str) -> str:
+def _detect_cluster_letter(
+    seat_id: str,
+    default_letter: str,
+    *,
+    declared: set[str] | None = None,
+) -> str:
+    """Pull a cluster letter out of an existing seat id; fall back to default.
+
+    When ``declared`` is given, a regex-detected letter is only
+    accepted if it's in the declared set — this prevents Ctrl+D
+    cascade ids like ``5-X-06-7-2`` (where X isn't a declared
+    cluster) from spuriously creating a new cluster X via auto-grow.
+    Qodo PR #59.
+    """
     m = _CLUSTER_LETTER_RE.match(seat_id)
-    return m.group(1) if m else default_letter
+    if not m:
+        return default_letter
+    letter = m.group(1)
+    if declared is not None and letter not in declared:
+        return default_letter
+    return letter
 
 
 def _room_number_start(rooms_sorted: list[ET.Element], floor: Floor) -> int:

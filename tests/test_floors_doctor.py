@@ -326,3 +326,63 @@ def test_doctor_polygon_with_malformed_points_does_not_crash(
     svg_path.write_text(svg_text, encoding="utf-8")  # restore
     report = doctor_svg(svg_path, _floor(data_dir), prune=True)
     assert report.rooms_after == 1
+
+
+def test_doctor_default_letter_uses_declaration_order_not_alphabetical(
+    data_dir: Path,
+) -> None:
+    """Qodo PR #59: orphan seats fall back to the **first declared**
+    cluster letter, not the alphabetically-first. A floor declared
+    `Z: ..., T: ...` (Z first in YAML) defaults orphans to Z."""
+    from office_cli.cli._commands.floors import _build_floor_entry  # noqa: F401
+    from office_cli.offices._models import Cluster, Floor
+
+    # Synthesize a floor whose declaration order is Z, T (alphabetically T < Z).
+    floor = Floor(
+        id="tlv-floor-7",
+        svg=data_dir / "floors" / "tlv-floor-7.svg",
+        clusters={
+            "Z": Cluster(letter="Z", capacity=2, type="phone-room"),
+            "T": Cluster(letter="T", capacity=4, type="open-space"),
+        },
+        rooms={},
+        status="draft",
+    )
+    svg_path = data_dir / "floors" / "tlv-floor-7.svg"
+    svg_path.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080">\n'
+        # Orphan seat (no cluster prefix).
+        '<rect id="orphan" class="seat" x="100" y="100" width="40" height="20"/>\n' "</svg>\n",
+        encoding="utf-8",
+    )
+
+    report = doctor_svg(svg_path, floor)
+    parsed = parse_svg(svg_path)
+    # Orphan went to Z (declaration-first), not T (alphabetical-first).
+    assert parsed.seat_ids == ("7-Z-01",)
+    assert report.new_clusters["Z"] == 1
+    assert report.new_clusters["T"] == 0
+
+
+def test_doctor_default_undeclared_letter_falls_back(data_dir: Path) -> None:
+    """Qodo PR #59: a seat id like ``5-X-...`` where X isn't a declared
+    cluster must not silently create a new X cluster — it falls back to
+    the default letter."""
+    svg_path = data_dir / "floors" / "tlv-floor-5.svg"
+    svg_path.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080">\n'
+        # Spurious cluster letter X (not declared in fixture; clusters are T,Z).
+        '<rect id="5-X-99" class="seat" x="100" y="100" width="40" height="20"/>\n'
+        '<polygon id="r" class="room" points="1400,300 1700,300 1700,500 1400,500"/>\n'
+        "</svg>\n",
+        encoding="utf-8",
+    )
+
+    report = doctor_svg(svg_path, _floor(data_dir))
+    # No spurious X cluster appears.
+    assert "X" not in report.new_clusters
+    # The orphan-X seat goes to the first declared letter (T, since
+    # the fixture declares T then Z).
+    assert report.new_clusters["T"] == 1
