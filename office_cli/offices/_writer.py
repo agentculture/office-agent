@@ -267,6 +267,6 @@ def _format_rooms_block(spec: object, nested: str) -> str:
             rtype = str(sub.get("type", "meeting"))
             cap = int(sub.get("capacity", 0))
             out.append(
-                f'{inner}"{room_id}": ' f'{{ name: "{name}", type: {rtype}, capacity: {cap} }}\n'
+                f'{inner}"{room_id}": {{ name: "{name}", type: {rtype}, capacity: {cap} }}\n'
             )
     return "".join(out)

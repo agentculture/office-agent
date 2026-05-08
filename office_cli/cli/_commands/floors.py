@@ -449,24 +449,41 @@ def cmd_copy_layout(args: argparse.Namespace) -> int:
 def cmd_new(args: argparse.Namespace) -> int:
     """Create a new floor end-to-end: append `offices.yaml` entry,
     scaffold the SVG, optionally copy layout from an existing floor.
+
+    Atomic flow (Qodo PR #57 review): scaffold + copy + validate all
+    happen BEFORE we touch offices.yaml. If anything fails, the only
+    side-effect is a partial SVG at dst_path (rolled back below); the
+    YAML stays untouched so a fresh `floors new` works.
+
+    Decomposed into helpers so cognitive complexity stays under
+    Sonar's S3776 threshold.
     """
     data_dir = resolve_data_dir(args)
     offices = load_offices(data_dir)
     office_id = _resolve_new_office(args, offices)
-    floor_id = args.floor_id
-    _ensure_floor_id_not_declared(floor_id, offices)
+    _ensure_floor_id_not_declared(args.floor_id, offices)
 
     floor_index = _index_floors(offices)
     src_floor, src_path = _resolve_optional_src(args, floor_index)
     pdf_path = _require_pdf(args)
     page = _coerce_page(args.page) if args.page else _require_page(args)
 
-    # Atomic flow (Qodo PR #57 review): scaffold + copy + validate
-    # all happen BEFORE we touch offices.yaml. If anything fails, the
-    # only side-effect is a partial SVG at dst_path (rolled back below);
-    # the YAML stays untouched so a fresh `floors new` works.
-    new_entry = _build_floor_entry(floor_id, src_floor)
+    new_entry = _build_floor_entry(args.floor_id, src_floor)
     dst_path = data_dir / new_entry["svg"]
+    _ensure_dst_unused(dst_path)
+    synthetic_floor = _synth_floor(args.floor_id, dst_path, new_entry)
+
+    actions, warnings = _render_and_validate(
+        synthetic_floor, dst_path, pdf_path, page, src_floor, src_path
+    )
+    yaml_path = data_dir / "data" / "offices.yaml"
+    append_floor_entry(yaml_path, office_id, new_entry)
+    actions.append(f"appended {args.floor_id} under office {office_id}")
+    _emit_new_result(args, office_id, args.floor_id, dst_path, actions, warnings)
+    return 0
+
+
+def _ensure_dst_unused(dst_path: Path) -> None:
     if dst_path.exists():
         raise OfficeError(
             code=EXIT_USER_ERROR,
@@ -476,13 +493,27 @@ def cmd_new(args: argparse.Namespace) -> int:
                 "(refusing to silently overwrite operator state)"
             ),
         )
-    synthetic_floor = Floor(
+
+
+def _synth_floor(floor_id: str, dst_path: Path, entry: dict) -> Floor:
+    return Floor(
         id=floor_id,
         svg=dst_path,
-        clusters=_synth_clusters(new_entry["clusters"]),
-        rooms=_synth_rooms(new_entry["rooms"]),
+        clusters=_synth_clusters(entry["clusters"]),
+        rooms=_synth_rooms(entry["rooms"]),
         status="draft",
     )
+
+
+def _render_and_validate(
+    synthetic_floor: Floor,
+    dst_path: Path,
+    pdf_path: Path,
+    page,
+    src_floor: Floor | None,
+    src_path: Path | None,
+) -> tuple[list[str], list]:
+    """Render scaffold + optional copy-layout + validate; roll back on failure."""
     actions = ["scaffolded SVG"]
     dst_path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -498,8 +529,6 @@ def cmd_new(args: argparse.Namespace) -> int:
             actions.append(f"copied layout from {src_floor.id}")
         issues = validate_floor(parse_svg(dst_path), synthetic_floor)
     except Exception:
-        # Roll back the partial SVG so a re-run isn't blocked on
-        # stale-file detection.
         if dst_path.exists():
             dst_path.unlink()
         raise
@@ -507,25 +536,28 @@ def cmd_new(args: argparse.Namespace) -> int:
     errors = [i for i in issues if i.severity is Severity.ERROR]
     warnings = [i for i in issues if i.severity is Severity.WARNING]
     if errors:
-        # Validation failed — roll back the SVG and refuse to write the
-        # YAML entry. Operator fixes the underlying issue and re-runs.
         dst_path.unlink()
         for err in errors:
             emit_diagnostic(f"  error [{err.rule}]: {err.message}")
         raise OfficeError(
             code=EXIT_USER_ERROR,
             message=(
-                f"generated SVG for {floor_id!r} has {len(errors)} validation "
-                "error(s); rolled back, no YAML written"
+                f"generated SVG for {synthetic_floor.id!r} has {len(errors)} "
+                "validation error(s); rolled back, no YAML written"
             ),
             remediation="fix the source layout (or pick a different page) and re-run",
         )
+    return actions, warnings
 
-    # Only commit YAML now that we have a clean, validated SVG on disk.
-    yaml_path = data_dir / "data" / "offices.yaml"
-    append_floor_entry(yaml_path, office_id, new_entry)
-    actions.append(f"appended {floor_id} under office {office_id}")
 
+def _emit_new_result(
+    args: argparse.Namespace,
+    office_id: str,
+    floor_id: str,
+    dst_path: Path,
+    actions: list[str],
+    warnings: list,
+) -> None:
     payload = {
         "office": office_id,
         "floor": floor_id,
@@ -536,17 +568,16 @@ def cmd_new(args: argparse.Namespace) -> int:
     }
     if args.json:
         emit_result(payload, json_mode=True)
-    else:
-        emit_result(f"OK   {floor_id} ({dst_path})", json_mode=False)
-        for action in actions:
-            emit_diagnostic(f"  {action}")
-        for warn in warnings:
-            emit_diagnostic(f"  warn  [{warn.rule}]: {warn.message}")
-        emit_diagnostic(
-            "  next: trace seats in Inkscape, then `office floors doctor "
-            f"{floor_id}`, then upload to Drive."
-        )
-    return 0
+        return
+    emit_result(f"OK   {floor_id} ({dst_path})", json_mode=False)
+    for action in actions:
+        emit_diagnostic(f"  {action}")
+    for warn in warnings:
+        emit_diagnostic(f"  warn  [{warn.rule}]: {warn.message}")
+    emit_diagnostic(
+        "  next: trace seats in Inkscape, then `office floors doctor "
+        f"{floor_id}`, then upload to Drive."
+    )
 
 
 def _synth_clusters(spec: object) -> dict:
