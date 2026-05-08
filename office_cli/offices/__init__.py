@@ -9,6 +9,7 @@ without leaking tracebacks.
 from __future__ import annotations
 
 from office_cli.offices._models import Cluster, Floor, Office, Room
+from office_cli.offices._writer import append_floor_entry
 from office_cli.offices._yaml import load_offices
 
-__all__ = ["Cluster", "Floor", "Office", "Room", "load_offices"]
+__all__ = ["Cluster", "Floor", "Office", "Room", "append_floor_entry", "load_offices"]

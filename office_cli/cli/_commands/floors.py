@@ -10,8 +10,15 @@ from pathlib import Path
 from office_cli._config import add_data_dir_arg, drive_cache_root, resolve_data_dir
 from office_cli.cli._errors import EXIT_USER_ERROR, OfficeError
 from office_cli.cli._output import emit_diagnostic, emit_result
-from office_cli.floors import Severity, doctor_svg, parse_svg, scaffold_svg, validate_floor
-from office_cli.offices import Floor, load_offices
+from office_cli.floors import (
+    Severity,
+    copy_layout,
+    doctor_svg,
+    parse_svg,
+    scaffold_svg,
+    validate_floor,
+)
+from office_cli.offices import Floor, append_floor_entry, load_offices
 
 _HELP_JSON = "Emit structured JSON."
 _DOCTOR_HINT_THRESHOLD = 3
@@ -409,6 +416,299 @@ def _scaffold_out_path(args: argparse.Namespace, existing: Path, data_dir: Path)
     return p.resolve()
 
 
+def cmd_copy_layout(args: argparse.Namespace) -> int:
+    """Copy seats + rooms (geometry only) from one floor's SVG into
+    another, renumbering ids per the dst's cluster spec."""
+    data_dir = resolve_data_dir(args)
+    floor_index = _index_floors(load_offices(data_dir))
+    src_floor, src_path = _resolve_scaffold_floor(args.src, floor_index)
+    dst_floor, dst_path = _resolve_scaffold_floor(args.dst, floor_index)
+    report = copy_layout(
+        src_path=src_path,
+        src_floor=src_floor,
+        dst_path=dst_path,
+        dst_floor=dst_floor,
+        overwrite=bool(args.overwrite),
+    )
+    if args.json:
+        emit_result(report.to_dict(), json_mode=True)
+    else:
+        emit_result(
+            f"OK   {src_floor.id} -> {dst_floor.id} "
+            f"(seats {report.seats_copied}/{report.seat_slots}, "
+            f"rooms {report.rooms_copied}/{report.room_slots})",
+            json_mode=False,
+        )
+        for action in report.actions:
+            emit_diagnostic(f"  {action}")
+        for warning in report.warnings:
+            emit_diagnostic(f"  warn: {warning}")
+    return 0
+
+
+def cmd_new(args: argparse.Namespace) -> int:
+    """Create a new floor end-to-end: append `offices.yaml` entry,
+    scaffold the SVG, optionally copy layout from an existing floor.
+
+    Atomic flow (Qodo PR #57 review): scaffold + copy + validate all
+    happen BEFORE we touch offices.yaml. If anything fails, the only
+    side-effect is a partial SVG at dst_path (rolled back below); the
+    YAML stays untouched so a fresh `floors new` works.
+
+    Decomposed into helpers so cognitive complexity stays under
+    Sonar's S3776 threshold.
+    """
+    data_dir = resolve_data_dir(args)
+    offices = load_offices(data_dir)
+    office_id = _resolve_new_office(args, offices)
+    _ensure_floor_id_not_declared(args.floor_id, offices)
+
+    floor_index = _index_floors(offices)
+    src_floor, src_path = _resolve_optional_src(args, floor_index)
+    pdf_path = _require_pdf(args)
+    page = _coerce_page(args.page) if args.page else _require_page(args)
+
+    new_entry = _build_floor_entry(args.floor_id, src_floor)
+    dst_path = data_dir / new_entry["svg"]
+    _ensure_dst_unused(dst_path)
+    synthetic_floor = _synth_floor(args.floor_id, dst_path, new_entry)
+
+    actions, warnings = _render_and_validate(
+        synthetic_floor, dst_path, pdf_path, page, src_floor, src_path
+    )
+    yaml_path = data_dir / "data" / "offices.yaml"
+    append_floor_entry(yaml_path, office_id, new_entry)
+    actions.append(f"appended {args.floor_id} under office {office_id}")
+    _emit_new_result(args, office_id, args.floor_id, dst_path, actions, warnings)
+    return 0
+
+
+def _ensure_dst_unused(dst_path: Path) -> None:
+    if dst_path.exists():
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"refusing to overwrite existing SVG: {dst_path}",
+            remediation=(
+                "delete the file first, or pick a different floor id "
+                "(refusing to silently overwrite operator state)"
+            ),
+        )
+
+
+def _synth_floor(floor_id: str, dst_path: Path, entry: dict) -> Floor:
+    return Floor(
+        id=floor_id,
+        svg=dst_path,
+        clusters=_synth_clusters(entry["clusters"]),
+        rooms=_synth_rooms(entry["rooms"]),
+        status="draft",
+    )
+
+
+def _render_and_validate(
+    synthetic_floor: Floor,
+    dst_path: Path,
+    pdf_path: Path,
+    page,
+    src_floor: Floor | None,
+    src_path: Path | None,
+) -> tuple[list[str], list]:
+    """Render scaffold + optional copy-layout + validate; roll back on failure."""
+    actions = ["scaffolded SVG"]
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        svg_bytes = scaffold_svg(floor=synthetic_floor, pdf=pdf_path, page=page)
+        dst_path.write_bytes(svg_bytes)
+        if src_floor is not None and src_path is not None:
+            copy_layout(
+                src_path=src_path,
+                src_floor=src_floor,
+                dst_path=dst_path,
+                dst_floor=synthetic_floor,
+            )
+            actions.append(f"copied layout from {src_floor.id}")
+        issues = validate_floor(parse_svg(dst_path), synthetic_floor)
+    except Exception:
+        if dst_path.exists():
+            dst_path.unlink()
+        raise
+
+    errors = [i for i in issues if i.severity is Severity.ERROR]
+    warnings = [i for i in issues if i.severity is Severity.WARNING]
+    if errors:
+        dst_path.unlink()
+        for err in errors:
+            emit_diagnostic(f"  error [{err.rule}]: {err.message}")
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=(
+                f"generated SVG for {synthetic_floor.id!r} has {len(errors)} "
+                "validation error(s); rolled back, no YAML written"
+            ),
+            remediation="fix the source layout (or pick a different page) and re-run",
+        )
+    return actions, warnings
+
+
+def _emit_new_result(
+    args: argparse.Namespace,
+    office_id: str,
+    floor_id: str,
+    dst_path: Path,
+    actions: list[str],
+    warnings: list,
+) -> None:
+    payload = {
+        "office": office_id,
+        "floor": floor_id,
+        "svg": str(dst_path),
+        "actions": actions,
+        "errors": [],
+        "warnings": [i.to_dict() for i in warnings],
+    }
+    if args.json:
+        emit_result(payload, json_mode=True)
+        return
+    emit_result(f"OK   {floor_id} ({dst_path})", json_mode=False)
+    for action in actions:
+        emit_diagnostic(f"  {action}")
+    for warn in warnings:
+        emit_diagnostic(f"  warn  [{warn.rule}]: {warn.message}")
+    emit_diagnostic(
+        "  next: trace seats in Inkscape, then `office floors doctor "
+        f"{floor_id}`, then upload to Drive."
+    )
+
+
+def _synth_clusters(spec: object) -> dict:
+    """Materialize the dict-of-Cluster used by `Floor` from a YAML-shape spec."""
+    from office_cli.offices._models import Cluster
+
+    out: dict = {}
+    if isinstance(spec, dict):
+        for letter, sub in spec.items():
+            if isinstance(sub, dict):
+                out[letter] = Cluster(
+                    letter=letter,
+                    capacity=int(sub.get("capacity", 1)),
+                    type=str(sub.get("type", "open-space")),
+                )
+    return out
+
+
+def _synth_rooms(spec: object) -> dict:
+    """Materialize the dict-of-Room used by `Floor` from a YAML-shape spec."""
+    from office_cli.offices._models import Room
+
+    out: dict = {}
+    if isinstance(spec, dict):
+        for rid, sub in spec.items():
+            if isinstance(sub, dict):
+                out[rid] = Room(
+                    id=rid,
+                    name=str(sub.get("name", rid)),
+                    type=str(sub.get("type", "meeting")),
+                    capacity=int(sub.get("capacity", 0)),
+                )
+    return out
+
+
+def _resolve_new_office(args: argparse.Namespace, offices: dict) -> str:
+    """Pick the office for a new floor.
+
+    Auto-detects when offices.yaml has exactly one office; required
+    otherwise.
+    """
+    if args.office:
+        if args.office not in offices:
+            known = ", ".join(sorted(offices.keys()))
+            raise OfficeError(
+                code=EXIT_USER_ERROR,
+                message=f"unknown office: {args.office!r}",
+                remediation=f"known offices: {known or '(none)'}",
+            )
+        return args.office
+    if len(offices) == 1:
+        return next(iter(offices))
+    known = ", ".join(sorted(offices.keys()))
+    raise OfficeError(
+        code=EXIT_USER_ERROR,
+        message="multiple offices declared; --office is required",
+        remediation=f"pass --office <id> (known: {known})",
+    )
+
+
+def _ensure_floor_id_not_declared(floor_id: str, offices: dict) -> None:
+    for office in offices.values():
+        if floor_id in office.floors:
+            raise OfficeError(
+                code=EXIT_USER_ERROR,
+                message=f"floor id {floor_id!r} is already declared under office {office.id!r}",
+                remediation=(
+                    "delete the existing entry first, or pick a different id "
+                    "(refusing to silently overwrite)"
+                ),
+            )
+
+
+def _resolve_optional_src(
+    args: argparse.Namespace, floor_index: dict[Path, Floor]
+) -> tuple[Floor | None, Path | None]:
+    src_id = getattr(args, "copy_from", None)
+    if not src_id:
+        return None, None
+    src_floor, src_path = _resolve_scaffold_floor(src_id, floor_index)
+    return src_floor, src_path
+
+
+def _require_pdf(args: argparse.Namespace) -> Path:
+    if not args.pdf:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message="--pdf is required",
+            remediation="pass --pdf <path-to-architects.pdf>",
+        )
+    return Path(args.pdf).expanduser()
+
+
+def _require_page(args: argparse.Namespace) -> int | str:
+    if not args.page:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message="--page is required",
+            remediation="pass --page <N> (1-based) or --page <label>",
+        )
+    return _coerce_page(args.page)
+
+
+def _build_floor_entry(floor_id: str, src_floor: Floor | None) -> dict:
+    """Shape the dict consumed by ``append_floor_entry``.
+
+    Inherits cluster + room spec from ``src_floor`` when given (so a
+    --copy-from creates an offices.yaml entry that fits the source's
+    layout). Without it, falls back to a placeholder T:1 cluster.
+    """
+    if src_floor is not None:
+        clusters = {
+            letter: {"capacity": cluster.capacity, "type": cluster.type}
+            for letter, cluster in src_floor.clusters.items()
+        }
+        rooms = {
+            rid: {"name": r.name, "type": r.type, "capacity": r.capacity}
+            for rid, r in src_floor.rooms.items()
+        }
+    else:
+        clusters = {"T": {"capacity": 1, "type": "open-space"}}
+        rooms = {}
+    return {
+        "id": floor_id,
+        "svg": f"floors/{floor_id}.svg",
+        "status": "draft",
+        "clusters": clusters,
+        "rooms": rooms,
+    }
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Diagnose-and-fix floor SVGs: drop off-page / duplicate shapes,
     renumber per ``offices.yaml`` cluster spec."""
@@ -664,6 +964,54 @@ def register(sub: argparse._SubParsersAction) -> None:
     p_scaff.add_argument("--json", action="store_true", help=_HELP_JSON)
     add_data_dir_arg(p_scaff)
     p_scaff.set_defaults(func=cmd_scaffold)
+
+    p_copy = inner.add_parser(
+        "copy-layout",
+        help="Copy seats+rooms geometry from one floor to another (renumbering ids).",
+        description=(
+            "Copy <rect class='seat'> and <polygon class='room'> elements "
+            "from a clean source floor's SVG into a destination scaffold. "
+            "The destination's embedded background and viewBox are preserved; "
+            "ids are renumbered per the dst floor's cluster spec in offices.yaml."
+        ),
+    )
+    p_copy.add_argument("src", help="Source floor id (e.g. 'tlv-floor-5').")
+    p_copy.add_argument("dst", help="Destination floor id (e.g. 'tlv-floor-3').")
+    p_copy.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Allow copying onto a non-draft (status: active) destination.",
+    )
+    p_copy.add_argument("--json", action="store_true", help=_HELP_JSON)
+    add_data_dir_arg(p_copy)
+    p_copy.set_defaults(func=cmd_copy_layout)
+
+    p_new = inner.add_parser(
+        "new",
+        help="Create a new floor: append offices.yaml entry + scaffold SVG.",
+        description=(
+            "End-to-end create for a new floor. Appends the offices.yaml entry "
+            "(status: draft), scaffolds the SVG from the chosen PDF page, and "
+            "optionally overlays seats+rooms from an existing floor."
+        ),
+    )
+    p_new.add_argument("floor_id", help="New floor id (e.g. 'tlv-floor-3').")
+    p_new.add_argument("--pdf", help="Path to the architect's PDF.")
+    p_new.add_argument(
+        "--page", help="1-based page number, or text label that appears on one page."
+    )
+    p_new.add_argument(
+        "--office",
+        help="Office id (required when offices.yaml declares multiple offices).",
+    )
+    p_new.add_argument(
+        "--copy-from",
+        dest="copy_from",
+        help="Existing floor id whose layout (and cluster spec) to inherit.",
+    )
+    p_new.add_argument("--json", action="store_true", help=_HELP_JSON)
+    add_data_dir_arg(p_new)
+    p_new.set_defaults(func=cmd_new)
 
     p_ref = inner.add_parser(
         "refresh",

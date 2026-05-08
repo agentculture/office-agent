@@ -663,3 +663,187 @@ def test_floors_scaffold_manifest_atomicity(
     assert rc != 0
     # The valid entry must NOT have been written:
     assert (data_dir / "floors" / "tlv-floor-5.svg").read_bytes() == floor5_before
+
+
+def test_floors_copy_layout_happy_path(data_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Add a draft tlv-floor-3 in offices.yaml + an empty scaffold-shaped
+    SVG, then copy floor-5's layout into it."""
+    from office_cli.offices import append_floor_entry
+
+    # Append a draft floor-3 with the same cluster spec as floor-5.
+    append_floor_entry(
+        data_dir / "data" / "offices.yaml",
+        "tlv",
+        {
+            "id": "tlv-floor-3",
+            "svg": "floors/tlv-floor-3.svg",
+            "clusters": {
+                "T": {"capacity": 6, "type": "open-space"},
+                "Z": {"capacity": 2, "type": "phone-room"},
+            },
+            "rooms": {
+                "3.10": {"name": "Conf 3.10", "type": "meeting", "capacity": 8},
+            },
+        },
+    )
+    (data_dir / "floors" / "tlv-floor-3.svg").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080">\n'
+        '<image x="0" y="0" width="1920" height="1080" href="data:image/png;base64,X"/>\n'
+        '<rect id="3-T-01" class="seat" x="100" y="100" width="51" height="25"/>\n'
+        '<polygon id="placeholder" class="room" points="200,200 260,200 260,240 200,240"/>\n'
+        "</svg>\n",
+        encoding="utf-8",
+    )
+
+    rc = main(
+        [
+            "floors",
+            "copy-layout",
+            "tlv-floor-5",
+            "tlv-floor-3",
+            "--json",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["src_floor"] == "tlv-floor-5"
+    assert payload["dst_floor"] == "tlv-floor-3"
+    assert payload["seats_copied"] == 8
+
+
+def test_floors_copy_layout_refuses_active_dst(
+    data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """floor-5 in the fixture is status: active. Copying onto it
+    without --overwrite must fail."""
+    from office_cli.offices import append_floor_entry
+
+    # Add an active second floor we'll use as src.
+    append_floor_entry(
+        data_dir / "data" / "offices.yaml",
+        "tlv",
+        {
+            "id": "tlv-floor-99",
+            "svg": "floors/tlv-floor-99.svg",
+            "status": "active",
+            "clusters": {"T": {"capacity": 6, "type": "open-space"}},
+            "rooms": {},
+        },
+    )
+    (data_dir / "floors" / "tlv-floor-99.svg").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080">\n'
+        '<rect id="99-T-01" class="seat" x="100" y="100" width="51" height="25"/>\n'
+        "</svg>\n",
+        encoding="utf-8",
+    )
+
+    rc = main(
+        [
+            "floors",
+            "copy-layout",
+            "tlv-floor-5",
+            "tlv-floor-99",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "refusing to clobber" in err
+
+
+def test_floors_new_with_copy_from(
+    data_dir: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`floors new --copy-from` runs the full chain: append YAML,
+    scaffold, copy layout. The result must validate clean."""
+    from office_cli.floors import _scaffold as scaffold_mod
+
+    monkeypatch.setattr(scaffold_mod, "_render_pdf_page", lambda *a, **kw: b"\x89PNG")
+
+    pdf = data_dir / "fake.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+
+    rc = main(
+        [
+            "floors",
+            "new",
+            "tlv-floor-3",
+            "--pdf",
+            str(pdf),
+            "--page",
+            "1",
+            "--copy-from",
+            "tlv-floor-5",
+            "--json",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["floor"] == "tlv-floor-3"
+    assert payload["office"] == "tlv"
+    # 8 seats + 1 room from floor-5 carried over → no errors.
+    assert payload["errors"] == []
+    # offices.yaml updated.
+    yaml_text = (data_dir / "data" / "offices.yaml").read_text(encoding="utf-8")
+    assert "tlv-floor-3" in yaml_text
+    # SVG written.
+    assert (data_dir / "floors" / "tlv-floor-3.svg").is_file()
+
+
+def test_floors_new_without_copy_from_uses_placeholder_cluster(
+    data_dir: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without --copy-from, the new floor gets a placeholder T:1 cluster."""
+    from office_cli.floors import _scaffold as scaffold_mod
+
+    monkeypatch.setattr(scaffold_mod, "_render_pdf_page", lambda *a, **kw: b"\x89PNG")
+    pdf = data_dir / "fake.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+
+    rc = main(
+        [
+            "floors",
+            "new",
+            "tlv-floor-3",
+            "--pdf",
+            str(pdf),
+            "--page",
+            "1",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    assert rc == 0
+    yaml_text = (data_dir / "data" / "offices.yaml").read_text(encoding="utf-8")
+    assert "tlv-floor-3" in yaml_text
+    assert "T: { capacity: 1" in yaml_text
+
+
+def test_floors_new_refuses_existing_floor_id(
+    data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pdf = data_dir / "fake.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    rc = main(
+        [
+            "floors",
+            "new",
+            "tlv-floor-5",  # already exists
+            "--pdf",
+            str(pdf),
+            "--page",
+            "1",
+            "--data-dir",
+            str(data_dir),
+        ]
+    )
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "already declared" in err

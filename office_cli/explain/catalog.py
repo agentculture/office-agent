@@ -113,6 +113,9 @@ List configured offices/floors and validate floor SVGs against the
 - `office floors doctor [PATH] [--all] [--dry-run] [--json] [--data-dir DIR]`
 - `office floors scaffold [FLOOR_ID] [--pdf P --page N|--manifest M]
     [--force] [--out PATH] [--json] [--data-dir DIR]`
+- `office floors new FLOOR_ID --pdf P --page N [--office ID]
+    [--copy-from SRC] [--json] [--data-dir DIR]`
+- `office floors copy-layout SRC DST [--overwrite] [--json] [--data-dir DIR]`
 - `office floors refresh [--json]`
 
 ## Validation rules
@@ -275,6 +278,98 @@ The scaffold passes `office floors validate` with a single
 seats/rooms in Inkscape, run `office floors doctor <id>` to renumber
 per the cluster spec, then flip the floor's `status: draft` to
 `status: active` in offices.yaml.
+"""
+
+_FLOORS_NEW = """\
+# office floors new
+
+Create a new floor end-to-end without hand-editing `offices.yaml`.
+Appends a draft entry to `data/offices.yaml`, scaffolds the SVG from
+a PDF page, and optionally overlays seats + rooms from an existing
+floor's layout.
+
+## Usage
+
+    office floors new tlv-floor-3 --pdf <path> --page 8
+    office floors new tlv-floor-3 --pdf <path> --page 8 --copy-from tlv-floor-5
+    office floors new fc-floor-6 --pdf <path> --page 2 --office fc
+
+## Flags
+
+- `--pdf PATH` — required. Architect's PDF.
+- `--page N|LABEL` — required. 1-based page number or string label.
+- `--office ID` — required when offices.yaml has multiple offices;
+  auto-detected for single-office configurations.
+- `--copy-from SRC` — existing floor id whose cluster spec, room
+  declarations, and SVG layout get inherited. The new floor ends up
+  with the same number of seats and rooms as `SRC`, just renumbered
+  for the new floor (e.g. `5-T-01` -> `3-T-01`).
+
+## Output
+
+- offices.yaml gets a new `floors[]` entry under the chosen office,
+  with `status: draft`. The append is textual: comments and field
+  ordering of existing entries are preserved.
+- `floors/<floor-id>.svg` is created with an embedded PDF page as
+  background and either (a) one example seat + one example room
+  (without `--copy-from`) or (b) the full layout from `--copy-from`.
+
+## Refusals
+
+- Floor id already declared anywhere in offices.yaml.
+- Multiple offices declared and no `--office` flag.
+- PDF, page, or `--copy-from` source missing.
+
+## Next steps
+
+After this verb succeeds, the typical loop is:
+
+    office floors doctor <new-floor-id>      # tidy ids if needed
+    office floors validate <new-floor-id>    # confirm clean
+    # Upload SVG + mirror offices.yaml entry to Drive (manual)
+    office floors refresh
+    office floors validate <new-floor-id>    # via Drive
+
+Flip `status: draft` -> `status: active` once the trace is real.
+"""
+
+_FLOORS_COPY_LAYOUT = """\
+# office floors copy-layout
+
+Copy `<rect class="seat">` and `<polygon class="room">` geometry from
+one floor's SVG into another, renumbering ids per the destination's
+cluster spec. Use when many floors share a layout (e.g. floor 3 and
+floor 4 of the same building) and you want to bootstrap the second
+floor without re-tracing in Inkscape.
+
+## Usage
+
+    office floors copy-layout tlv-floor-5 tlv-floor-3
+    office floors copy-layout tlv-floor-5 tlv-floor-3 --overwrite
+
+## What it does
+
+1. Validate src — refuses to copy a layout with errors.
+2. Strip the dst's existing seats + rooms (the example placeholders
+   from `office floors scaffold`).
+3. Deep-copy src's seats + rooms into dst, preserving `x/y/w/h`
+   and `points` attributes.
+4. Renumber via the same logic the doctor verb uses: spatial sort,
+   slot assignment per dst's cluster spec, drop excess.
+5. Pretty-print and write back. Capacity warnings emitted if dst
+   has fewer seats than src.
+
+## Refusals
+
+- Either id ambiguous (same id under two offices) — same guard as
+  validate / doctor / scaffold.
+- src has validation errors.
+- dst is `status: active` and `--overwrite` was not passed.
+
+## Output
+
+Text: a status line plus indented action lines and any warnings.
+JSON (with `--json`): `{src_floor, dst_floor, seats_copied, rooms_copied, ...}`.
 """
 
 _FLOORS_REFRESH = """\
@@ -486,6 +581,8 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("floors", "validate"): _FLOORS_VALIDATE,
     ("floors", "doctor"): _FLOORS_DOCTOR,
     ("floors", "scaffold"): _FLOORS_SCAFFOLD,
+    ("floors", "new"): _FLOORS_NEW,
+    ("floors", "copy-layout"): _FLOORS_COPY_LAYOUT,
     ("floors", "refresh"): _FLOORS_REFRESH,
     ("seats",): _SEATS,
     ("seats", "assign"): _SEATS_ASSIGN,
