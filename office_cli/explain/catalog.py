@@ -173,10 +173,10 @@ Text: one line per floor (`OK` / `FAIL`) plus indented `error [rule]:` /
 _FLOORS_DOCTOR = """\
 # office floors doctor
 
-Diagnose and fix common Inkscape pitfalls in a traced floor SVG.
-Inkscape's `Ctrl+D` duplication generates ids like `5-T-06-7-4-0-8`
-and often leaves shapes off-page; this verb cleans the noise so the
-file passes `office floors validate`.
+Fix the ids in a traced floor SVG. By default the verb keeps every
+shape (just renumbers them per cluster) and auto-grows
+`offices.yaml` to match. Pass `--prune` for the original aggressive
+cleanup that drops off-page + near-duplicate shapes.
 
 ## Usage
 
@@ -184,41 +184,59 @@ file passes `office floors validate`.
     office floors doctor tlv-floor-5 --dry-run
     office floors doctor floors/tlv-floor-5.svg
     office floors doctor --all
+    office floors doctor tlv-floor-5 --prune          # aggressive cleanup
     office floors doctor tlv-floor-5 --json
 
 A bare argument is tried first as a floor id (matched against
 `offices.yaml`), then falls back to a path resolved against the
 data dir.
 
-## What it does (in order)
+## Default mode (keep-all)
 
-1. Drops `<rect class="seat">` and `<polygon class="room">` whose
-   bounding-box center is outside the 1920x1080 viewBox.
-2. Drops near-duplicate elements (centers within ~6 px of an
-   already-kept element of the same class).
-3. Sorts surviving elements row-major (y bucketed by ~30 px, then x).
-4. Renumbers seats per the floor's `offices.yaml` cluster spec
-   (clusters walked in alphabetical order, capacities filled in
-   sequence). Excess seats are dropped.
-5. Renumbers rooms per the floor's declared room ids in
-   `offices.yaml`. Excess rooms are dropped.
+1. Detect cluster letter from each seat's existing id (regex
+   `<floor>-([A-Z])-`); seats without a recognized prefix go to
+   the first declared cluster letter.
+2. Within each cluster, sort row-major (y bucketed by ~30 px,
+   then x); mint sequential `<floor>-<LETTER>-<NN>` ids.
+3. For rooms: pull the numeric suffix from existing
+   `<floor>.<NN>` ids; sort spatially; mint sequential
+   `<floor>.<NN>` ids starting at the minimum suffix found
+   (defaults to 18).
+4. Auto-grow `offices.yaml`: bump cluster capacities to the actual
+   counts; replace the `rooms:` block with the new sequential id
+   list. Newly-added rooms get default `name: "Room <id>"`,
+   `type: meeting`, `capacity: 4` — operator can edit later.
+
+The new SVG passes `office floors validate` cleanly.
+
+## Prune mode (`--prune`)
+
+1. Drop `<rect class="seat">` / `<polygon class="room">` whose
+   center is outside the 1920×1080 viewBox.
+2. Drop near-duplicates (centers within ~6 px).
+3. Renumber per the existing `offices.yaml` cluster spec; drop
+   excess. Used when an Inkscape `Ctrl+D` cascade left many true
+   overlapping copies and the operator wants them flattened.
+
+`offices.yaml` is **not** mutated in prune mode.
 
 ## Output
 
 Text: a status line plus indented action lines and any warnings:
 
-    OK    tlv-floor-5 (floors/tlv-floor-5.svg) seats 21->5 rooms 14->1
-      dropped 16 off-page seats
-      dropped 13 near-duplicate rooms
-      renamed 5 seats
-      renamed 1 room
-      warn: 5 seats traced; offices.yaml declares 8 ...
+    OK    tlv-floor-5 (floors/tlv-floor-5.svg) seats 21->21 rooms 14->14
+      renamed 21 seats
+      clusters: T: 6 -> 21
+      renamed 14 rooms
+      + 13 rooms (5.19..5.31)
+      updated offices.yaml: tlv-floor-5 clusters/rooms auto-grown
 
-JSON: `{"results": [{<fields>}]}` where `<fields>` includes
-`floor`, `svg`, `dry_run`, `seats_before`, `seats_after`,
-`rooms_before`, `rooms_after`, `actions`, `warnings`.
+JSON: `{"results": [{...}]}` with the same fields plus
+`new_clusters` (letter → capacity) and `new_rooms` (id list)
+reflecting the post-doctor spec.
 
-`--dry-run` reports what would change without writing the SVG.
+`--dry-run` reports what would change without writing either the
+SVG or `offices.yaml`.
 """
 
 _FLOORS_SCAFFOLD = """\

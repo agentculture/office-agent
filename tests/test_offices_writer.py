@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from office_cli.cli._errors import EXIT_USER_ERROR, OfficeError
-from office_cli.offices import append_floor_entry, load_offices
+from office_cli.offices import append_floor_entry, load_offices, update_floor_entry
 
 _TWO_OFFICE_YAML = """\
 # This top-level comment must survive any append.
@@ -234,3 +234,92 @@ def test_append_matches_existing_indentation(tmp_path: Path) -> None:
     # And load_offices must still succeed (well-formed YAML).
     offices = load_offices(tmp_path)
     assert "tlv-floor-3" in offices["tlv"].floors
+
+
+def test_update_floor_entry_replaces_clusters(tmp_path: Path) -> None:
+    """Doctor's auto-grow path: bump T's capacity from 6 to 21 in-place."""
+    yaml_path = _write(tmp_path)
+    update_floor_entry(
+        yaml_path,
+        "tlv",
+        "tlv-floor-5",
+        clusters={"T": {"capacity": 21, "type": "open-space"}},
+    )
+    offices = load_offices(tmp_path)
+    floor = offices["tlv"].floors["tlv-floor-5"]
+    assert floor.clusters["T"].capacity == 21
+    # Other floors untouched.
+    assert offices["nyc"].floors["nyc-floor-12"].clusters["A"].capacity == 4
+
+
+def test_update_floor_entry_replaces_rooms(tmp_path: Path) -> None:
+    """Replace the rooms block with a new sequential list."""
+    yaml_path = _write(tmp_path)
+    new_rooms = {
+        f"5.{n}": {"name": f"Room 5.{n}", "type": "meeting", "capacity": 4} for n in range(18, 32)
+    }
+    update_floor_entry(yaml_path, "tlv", "tlv-floor-5", rooms=new_rooms)
+    offices = load_offices(tmp_path)
+    floor = offices["tlv"].floors["tlv-floor-5"]
+    assert sorted(floor.rooms.keys()) == [f"5.{n}" for n in range(18, 32)]
+
+
+def test_update_floor_entry_preserves_top_level_comments(tmp_path: Path) -> None:
+    yaml_path = _write(tmp_path)
+    update_floor_entry(
+        yaml_path,
+        "tlv",
+        "tlv-floor-5",
+        clusters={"T": {"capacity": 21, "type": "open-space"}},
+    )
+    text = yaml_path.read_text(encoding="utf-8")
+    assert "# This top-level comment must survive any append." in text
+    assert "# Stage 7 — SSO + roles." in text
+
+
+def test_update_floor_entry_replaces_both_clusters_and_rooms(tmp_path: Path) -> None:
+    yaml_path = _write(tmp_path)
+    update_floor_entry(
+        yaml_path,
+        "tlv",
+        "tlv-floor-5",
+        clusters={
+            "T": {"capacity": 21, "type": "open-space"},
+            "Z": {"capacity": 0, "type": "phone-room"},
+        },
+        rooms={
+            f"5.{n}": {"name": f"Room 5.{n}", "type": "meeting", "capacity": 4}
+            for n in range(18, 25)
+        },
+    )
+    offices = load_offices(tmp_path)
+    floor = offices["tlv"].floors["tlv-floor-5"]
+    assert floor.clusters["T"].capacity == 21
+    assert floor.clusters["Z"].capacity == 0
+    assert len(floor.rooms) == 7
+
+
+def test_update_floor_entry_refuses_unknown_floor(tmp_path: Path) -> None:
+    yaml_path = _write(tmp_path)
+    with pytest.raises(OfficeError) as exc:
+        update_floor_entry(
+            yaml_path,
+            "tlv",
+            "no-such-floor",
+            clusters={"T": {"capacity": 6, "type": "open-space"}},
+        )
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "not found" in exc.value.message
+
+
+def test_update_floor_entry_refuses_unknown_office(tmp_path: Path) -> None:
+    yaml_path = _write(tmp_path)
+    with pytest.raises(OfficeError) as exc:
+        update_floor_entry(
+            yaml_path,
+            "no-such-office",
+            "tlv-floor-5",
+            clusters={"T": {"capacity": 6, "type": "open-space"}},
+        )
+    assert exc.value.code == EXIT_USER_ERROR
+    assert "unknown office" in exc.value.message

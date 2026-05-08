@@ -1,10 +1,21 @@
 """Diagnose-and-fix for floor SVGs.
 
-Cleans up the most common Inkscape pitfall: ``Ctrl+D`` duplication
-generates ids like ``5-T-06-7-4-0-8`` and leaves shapes scattered
-off-page. :func:`doctor_svg` parses the SVG, drops elements outside
-the viewBox, deduplicates near-overlapping shapes, then renumbers
-the survivors per the floor's ``offices.yaml`` cluster spec.
+Two modes:
+
+- **Default (keep-all)**: just fix the ids. Walks every traced
+  ``<rect class="seat">`` and ``<polygon class="room">``, detects
+  the cluster letter / floor prefix, sorts spatially, mints
+  sequential valid ids. Auto-grows the slot list to accommodate
+  every shape — operators don't lose any traced geometry. The
+  caller (CLI verb) then auto-grows ``offices.yaml`` to match the
+  new cluster capacity / room list.
+
+- **Prune mode** (``prune=True``): the original aggressive cleanup.
+  Drops shapes outside the ``1920x1080`` viewBox, drops near-
+  duplicate shapes within ``_DEDUP_PX`` of each other, then
+  renumbers per the floor's ``offices.yaml`` cluster spec (drops
+  excess). Useful when an Inkscape ``Ctrl+D`` cascade has produced
+  many overlapping copies the operator wants flattened.
 
 The function is pure on the file-system: pass ``dry_run=True`` to
 get a report without writing changes.
@@ -26,6 +37,13 @@ _VIEW_W = 1920
 _VIEW_H = 1080
 _DEDUP_PX = 6.0  # bounding-box centers within this distance treated as duplicates
 _ROW_TOL = 30.0  # y-pixel grouping tolerance for row-major spatial sort
+
+# Detect a cluster letter prefix in an existing seat id, e.g.
+# ``5-T-06`` or ``5-T-06-7-2`` (Ctrl+D cascade) → letter ``T``.
+_CLUSTER_LETTER_RE = re.compile(r"^\d+-([A-Z])-")
+# Detect floor.<NN> in an existing room id (or its ``5.18-1-3``
+# Ctrl+D-cascade descendants). Captures the first numeric suffix.
+_ROOM_NUM_RE = re.compile(r"^\d+\.(\d+)")
 
 # Register the SVG namespace as the default so writes emit
 # <svg xmlns="..."> instead of <ns0:svg xmlns:ns0="...">. Browsers
@@ -49,6 +67,11 @@ class DoctorReport:
     rooms_after: int
     actions: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    # Post-doctor cluster spec: letter → capacity. The CLI uses this
+    # to auto-grow offices.yaml when shapes exceed declared capacity.
+    new_clusters: dict[str, int] = field(default_factory=dict)
+    # Post-doctor room id list, in spatial order. Ditto auto-grow.
+    new_rooms: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -61,29 +84,42 @@ class DoctorReport:
             "rooms_after": self.rooms_after,
             "actions": list(self.actions),
             "warnings": list(self.warnings),
+            "new_clusters": dict(self.new_clusters),
+            "new_rooms": list(self.new_rooms),
         }
 
 
-def doctor_svg(svg_path: Path, floor: Floor, *, dry_run: bool = False) -> DoctorReport:
-    """Clean up duplicate / off-page noise in ``svg_path`` for ``floor``.
+def doctor_svg(
+    svg_path: Path,
+    floor: Floor,
+    *,
+    dry_run: bool = False,
+    prune: bool = False,
+) -> DoctorReport:
+    """Fix the ids in ``svg_path`` for ``floor``; optionally prune.
 
-    Steps (in order):
+    Default behavior (``prune=False``):
 
-    1. Drop ``<rect class="seat">`` and ``<polygon class="room">``
-       elements whose bounding-box center is outside the 1920x1080
-       viewBox.
-    2. Drop near-duplicate elements (centers within ``_DEDUP_PX`` of
-       an already-kept element of the same class).
-    3. Sort survivors row-major (y bucketed by ``_ROW_TOL``, then x).
-    4. Renumber:
-       - seats: walk ``floor.clusters`` in alphabetical order; assign
-         ``<floor>-<LETTER>-<NN>`` ids until each cluster's capacity
-         is filled. Excess seats beyond the total capacity are dropped.
-       - rooms: assign ids from ``floor.rooms`` keys (architect ids)
-         in spatial order. Excess rooms are dropped.
+    1. Detect the cluster letter for each seat from its existing id.
+       Seats whose ids don't match ``<floor>-<LETTER>-`` are bucketed
+       into the first declared cluster letter.
+    2. Within each cluster, spatial-sort row-major, mint sequential
+       ``<floor>-<LETTER>-<NN>`` ids.
+    3. For rooms: detect numeric suffix from existing ``<floor>.<NN>``
+       ids; spatial-sort; mint sequential ``<floor>.<NN>`` starting
+       at ``min(existing)`` (or ``18`` if no existing valid suffix).
+    4. **Keep all traced shapes** — the slot list extends to fit.
 
-    Returns a :class:`DoctorReport` describing what changed. With
-    ``dry_run=True`` the file is not written.
+    With ``prune=True``:
+
+    1. Drop ``<rect class="seat">`` / ``<polygon class="room">``
+       whose center is outside ``1920x1080``.
+    2. Drop near-duplicate elements (centers within ``_DEDUP_PX``).
+    3. Renumber per the floor's declared cluster spec; drop excess.
+
+    Returns a :class:`DoctorReport`. With ``dry_run=True`` the file
+    is not written; the caller can still inspect the report's
+    ``new_clusters`` / ``new_rooms`` to preview the effect.
     """
     if not svg_path.is_file():
         raise OfficeError(
@@ -102,16 +138,20 @@ def doctor_svg(svg_path: Path, floor: Floor, *, dry_run: bool = False) -> Doctor
     rooms_before = len(rooms)
 
     actions: list[str] = []
-    seat_slots = _seat_ids_for(floor.number, floor.clusters)
-    room_slots = list(floor.rooms.keys())
-
-    seats, seat_excess = _clean_category(seats, seat_slots, parents, "seats", actions)
-    rooms, room_excess = _clean_category(rooms, room_slots, parents, "rooms", actions)
-
-    seats_after = min(len(seats) - seat_excess, len(seat_slots))
-    rooms_after = min(len(rooms) - room_excess, len(room_slots))
-
-    warnings = _capacity_warnings(seats_after, len(seat_slots), rooms_after, len(room_slots))
+    if prune:
+        seats_after, rooms_after, new_clusters, new_rooms = _prune_and_renumber(
+            seats, rooms, floor, parents, actions
+        )
+    else:
+        seats_after, rooms_after, new_clusters, new_rooms = _keep_all_renumber(
+            seats, rooms, floor, actions
+        )
+    warnings = _capacity_warnings(
+        seats_after,
+        sum(c.capacity for c in floor.clusters.values()),
+        rooms_after,
+        len(floor.rooms),
+    )
 
     if not dry_run and actions:
         # Pretty-print before write so floor SVGs in the repo produce a
@@ -129,7 +169,183 @@ def doctor_svg(svg_path: Path, floor: Floor, *, dry_run: bool = False) -> Doctor
         rooms_after=rooms_after,
         actions=actions,
         warnings=warnings,
+        new_clusters=new_clusters,
+        new_rooms=new_rooms,
     )
+
+
+# -- modes ------------------------------------------------------------------
+
+
+def _prune_and_renumber(
+    seats: list[ET.Element],
+    rooms: list[ET.Element],
+    floor: Floor,
+    parents: dict[ET.Element, ET.Element],
+    actions: list[str],
+) -> tuple[int, int, dict[str, int], list[str]]:
+    """Prune mode (existing aggressive behavior). Returns the post-counts."""
+    seat_slots = _seat_ids_for(floor.number, floor.clusters)
+    room_slots = list(floor.rooms.keys())
+    seats, seat_excess = _clean_category(seats, seat_slots, parents, "seats", actions)
+    rooms, room_excess = _clean_category(rooms, room_slots, parents, "rooms", actions)
+    seats_after = min(len(seats) - seat_excess, len(seat_slots))
+    rooms_after = min(len(rooms) - room_excess, len(room_slots))
+    # Post-doctor spec is unchanged from the declared one (we dropped to fit).
+    new_clusters = {letter: c.capacity for letter, c in floor.clusters.items()}
+    new_rooms = list(floor.rooms.keys())
+    return seats_after, rooms_after, new_clusters, new_rooms
+
+
+def _keep_all_renumber(
+    seats: list[ET.Element],
+    rooms: list[ET.Element],
+    floor: Floor,
+    actions: list[str],
+) -> tuple[int, int, dict[str, int], list[str]]:
+    """Keep-all mode: just fix ids; auto-grow slot list to fit every shape."""
+    new_clusters = _renumber_seats_keep_all(seats, floor, actions)
+    new_rooms = _renumber_rooms_keep_all(rooms, floor, actions)
+    return len(seats), len(rooms), new_clusters, new_rooms
+
+
+def _renumber_seats_keep_all(
+    seats: list[ET.Element],
+    floor: Floor,
+    actions: list[str],
+) -> dict[str, int]:
+    """Renumber all seats, auto-growing each cluster letter's capacity.
+
+    Returns the post-doctor cluster spec (letter → count).
+    """
+    default_letter = _default_cluster_letter(floor)
+    declared = set(floor.clusters)
+    by_letter: dict[str, list[ET.Element]] = {}
+    for el in seats:
+        letter = _detect_cluster_letter(el.get("id") or "", default_letter, declared=declared)
+        by_letter.setdefault(letter, []).append(el)
+
+    new_caps: dict[str, int] = {}
+    renamed_total = 0
+    for letter in sorted(by_letter.keys()):
+        items = by_letter[letter]
+        items.sort(key=_spatial_key)
+        for n, el in enumerate(items, start=1):
+            new_id = f"{floor.number}-{letter}-{n:02d}"
+            if (el.get("id") or "") != new_id:
+                el.set("id", new_id)
+                renamed_total += 1
+        new_caps[letter] = len(items)
+
+    # Preserve declared cluster letters with capacity 0 if no shapes
+    # mapped to them (operator may add later — keeps offices.yaml stable).
+    for letter in floor.clusters:
+        new_caps.setdefault(letter, 0)
+
+    if renamed_total:
+        actions.append(f"renamed {renamed_total} seats")
+    grown = [
+        f"{letter}: {floor.clusters[letter].capacity} -> {cap}"
+        for letter, cap in new_caps.items()
+        if letter in floor.clusters and cap != floor.clusters[letter].capacity
+    ]
+    new_letters = sorted(set(new_caps) - set(floor.clusters))
+    if new_letters:
+        grown.extend(f"+ {letter}: {new_caps[letter]}" for letter in new_letters)
+    if grown:
+        actions.append(f"clusters: {', '.join(grown)}")
+    return new_caps
+
+
+def _renumber_rooms_keep_all(
+    rooms: list[ET.Element],
+    floor: Floor,
+    actions: list[str],
+) -> list[str]:
+    """Renumber all rooms, auto-growing the rooms list to fit every shape."""
+    if not rooms:
+        return list(floor.rooms.keys())
+    rooms_sorted = sorted(rooms, key=_spatial_key)
+    start = _room_number_start(rooms_sorted, floor)
+    new_ids: list[str] = []
+    renamed = 0
+    for offset, el in enumerate(rooms_sorted):
+        new_id = f"{floor.number}.{start + offset}"
+        new_ids.append(new_id)
+        if (el.get("id") or "") != new_id:
+            el.set("id", new_id)
+            renamed += 1
+    if renamed:
+        actions.append(f"renamed {renamed} rooms")
+    declared = list(floor.rooms.keys())
+    if new_ids != declared:
+        added = [r for r in new_ids if r not in floor.rooms]
+        if added:
+            actions.append(f"+ {len(added)} rooms ({added[0]}..{added[-1]})")
+    return new_ids
+
+
+def _default_cluster_letter(floor: Floor) -> str:
+    """First **declared** cluster letter, or 'T' if none.
+
+    Uses ``next(iter(...))`` rather than alphabetical sort so the
+    docstring matches the behavior — a floor declared as
+    ``Z: 5, T: 3`` defaults to ``Z`` (declaration order), not ``T``
+    (alphabetical). YAML loaders preserve insertion order. Qodo PR #59.
+    """
+    if floor.clusters:
+        return next(iter(floor.clusters))
+    return "T"
+
+
+def _detect_cluster_letter(
+    seat_id: str,
+    default_letter: str,
+    *,
+    declared: set[str] | None = None,
+) -> str:
+    """Pull a cluster letter out of an existing seat id; fall back to default.
+
+    When ``declared`` is given, a regex-detected letter is only
+    accepted if it's in the declared set — this prevents Ctrl+D
+    cascade ids like ``5-X-06-7-2`` (where X isn't a declared
+    cluster) from spuriously creating a new cluster X via auto-grow.
+    Qodo PR #59.
+    """
+    m = _CLUSTER_LETTER_RE.match(seat_id)
+    if not m:
+        return default_letter
+    letter = m.group(1)
+    if declared is not None and letter not in declared:
+        return default_letter
+    return letter
+
+
+def _room_number_start(rooms_sorted: list[ET.Element], floor: Floor) -> int:
+    """Pick the starting NN for room renumbering.
+
+    Uses the smallest valid existing NN (e.g. 18 from ``5.18``) so
+    the architect's own first-room number is preserved. Falls back
+    to the floor's smallest declared room number, or 18 by default.
+    """
+    found: list[int] = []
+    for el in rooms_sorted:
+        m = _ROOM_NUM_RE.match(el.get("id") or "")
+        if m:
+            found.append(int(m.group(1)))
+    if found:
+        return min(found)
+    declared = [
+        int(rid.split(".", 1)[1])
+        for rid in floor.rooms
+        if "." in rid and rid.split(".", 1)[1].isdigit()
+    ]
+    if declared:
+        return min(declared)
+    return 18
+
+
+# -- prune-mode helpers -----------------------------------------------------
 
 
 def _parse(svg_path: Path) -> ET.ElementTree:
@@ -192,9 +408,6 @@ def _capacity_warnings(
             "(trace more in Inkscape and re-run)"
         )
     return out
-
-
-# -- helpers ----------------------------------------------------------------
 
 
 def _assign_ids(
