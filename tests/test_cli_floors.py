@@ -261,7 +261,7 @@ def test_floors_refresh_when_cache_absent(
 ) -> None:
     """Issue #54: refresh is idempotent — succeeds even if the cache
     was never created. Operators run it as a precaution."""
-    cache = tmp_path / "drive-cache"
+    cache = tmp_path / "office-cli" / "drive"
     monkeypatch.setenv("OFFICE_DRIVE_CACHE_DIR", str(cache))
     rc = main(["floors", "refresh", "--json"])
     assert rc == 0
@@ -273,7 +273,7 @@ def test_floors_refresh_when_cache_absent(
 def test_floors_refresh_removes_existing_cache(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    cache = tmp_path / "drive-cache"
+    cache = tmp_path / "office-cli" / "drive"
     (cache / "data").mkdir(parents=True)
     (cache / "data" / "offices.yaml").write_text("offices: []\n", encoding="utf-8")
     monkeypatch.setenv("OFFICE_DRIVE_CACHE_DIR", str(cache))
@@ -283,6 +283,49 @@ def test_floors_refresh_removes_existing_cache(
     payload = json.loads(capsys.readouterr().out)
     assert payload["removed"] is True
     assert not cache.exists()
+
+
+def test_floors_refresh_refuses_unsafe_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Qodo PR #55 review: a mis-set OFFICE_DRIVE_CACHE_DIR (e.g. `/`
+    or `$HOME`) must not be silently rmtree'd. The verb requires
+    'office-cli' as a path component before deleting anything."""
+    danger = tmp_path / "not-our-cache"
+    danger.mkdir()
+    (danger / "important.txt").write_text("don't lose me", encoding="utf-8")
+    monkeypatch.setenv("OFFICE_DRIVE_CACHE_DIR", str(danger))
+
+    rc = main(["floors", "refresh"])
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "office-cli" in err
+    assert "refusing" in err.lower()
+    # Untouched.
+    assert (danger / "important.txt").is_file()
+
+
+def test_floors_refresh_surfaces_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Qodo PR #55 review: rmtree errors must not be silently swallowed
+    — operators kept serving stale Drive data on failure. Simulate by
+    monkeypatching shutil.rmtree to raise."""
+    cache = tmp_path / "office-cli" / "drive"
+    cache.mkdir(parents=True)
+    (cache / "blob").write_text("x", encoding="utf-8")
+    monkeypatch.setenv("OFFICE_DRIVE_CACHE_DIR", str(cache))
+
+    def boom(path):
+        raise OSError("simulated permission error")
+
+    from office_cli.cli._commands import floors as floors_mod
+
+    monkeypatch.setattr(floors_mod.shutil, "rmtree", boom)
+    rc = main(["floors", "refresh"])
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "failed to remove" in err.lower()
 
 
 def test_floors_validate_suggests_doctor_on_ctrld_cascade(

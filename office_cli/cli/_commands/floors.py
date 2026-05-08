@@ -82,18 +82,76 @@ def cmd_refresh(args: argparse.Namespace) -> int:
     via ``OFFICE_DRIVE_ROOT`` re-downloads the Drive tree from
     scratch. Issue #54: replaces the documented `rm -rf` workaround
     operators were running between Drive uploads and validate.
+
+    Defends against a footgun: a typo in ``OFFICE_DRIVE_CACHE_DIR``
+    (e.g. ``/``) would otherwise let this verb wipe arbitrary trees.
+    The resolved path must contain ``office-cli`` as a literal
+    component, or the verb refuses with ``EXIT_USER_ERROR``.
     """
-    cache_dir = drive_cache_root()
-    existed = cache_dir.exists()
-    shutil.rmtree(cache_dir, ignore_errors=True)
-    payload = {"cache_dir": str(cache_dir), "removed": existed}
+    cache_dir = drive_cache_root().resolve()
+    _ensure_safe_cache_path(cache_dir)
+    if not cache_dir.exists():
+        payload = {"cache_dir": str(cache_dir), "removed": False}
+        if args.json:
+            emit_result(payload, json_mode=True)
+        else:
+            emit_result(
+                f"nothing to refresh ({cache_dir} did not exist)",
+                json_mode=False,
+            )
+        return 0
+    try:
+        if cache_dir.is_dir() and not cache_dir.is_symlink():
+            shutil.rmtree(cache_dir)
+        else:
+            cache_dir.unlink()
+    except OSError as err:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"failed to remove Drive cache at {cache_dir}: {err}",
+            remediation=(
+                "check filesystem permissions on the cache dir, or remove it "
+                "manually with `rm -rf <path>` once the underlying issue is fixed"
+            ),
+        ) from err
+    if cache_dir.exists():
+        # rmtree returned without raising but something is still there
+        # (e.g. a concurrent process recreated the dir). Surface this
+        # so operators don't silently keep serving stale Drive data.
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=f"Drive cache at {cache_dir} still exists after refresh",
+            remediation="check for a concurrent process holding the cache; remove it manually",
+        )
+    payload = {"cache_dir": str(cache_dir), "removed": True}
     if args.json:
         emit_result(payload, json_mode=True)
-    elif existed:
-        emit_result(f"refreshed {cache_dir}", json_mode=False)
     else:
-        emit_result(f"nothing to refresh ({cache_dir} did not exist)", json_mode=False)
+        emit_result(f"refreshed {cache_dir}", json_mode=False)
     return 0
+
+
+def _ensure_safe_cache_path(cache_dir: Path) -> None:
+    """Refuse to delete obviously-dangerous targets.
+
+    The cache dir must contain ``office-cli`` as a literal path
+    component. The default (``~/.cache/office-cli/drive``) and any
+    sensible ``OFFICE_DRIVE_CACHE_DIR`` override (e.g.
+    ``/tmp/test-office-cli/drive``) satisfy this — but ``/``,
+    ``$HOME``, ``~/.cache``, etc. do not.
+    """
+    if "office-cli" not in cache_dir.parts:
+        raise OfficeError(
+            code=EXIT_USER_ERROR,
+            message=(
+                f"refusing to delete {cache_dir}: path must contain 'office-cli' " "as a component"
+            ),
+            remediation=(
+                "unset OFFICE_DRIVE_CACHE_DIR (use the default "
+                "~/.cache/office-cli/drive) or set it to a path under an "
+                "office-cli-named directory"
+            ),
+        )
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
