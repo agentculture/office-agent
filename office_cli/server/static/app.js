@@ -24,22 +24,31 @@ const URL_PATH_RE = /^\/offices\/([^/]+)\/floors\/([^/]+)\/?$/;
 
 const els = {
   search: document.getElementById("search"),
+  searchScope: document.getElementById("search-scope"),
   results: document.getElementById("results"),
+  resultsList: document.getElementById("results-list"),
   map: document.getElementById("map"),
   detail: document.getElementById("detail"),
   banner: document.getElementById("banner"),
+  officePicker: document.getElementById("office-picker"),
   floorPicker: document.getElementById("floor-picker"),
   userInfo: document.getElementById("user-info"),
 };
 
 const state = {
   offices: [],
+  officesById: new Map(),
+  floorToOffice: new Map(),
   knownFloorIds: new Set(),
   currentFloorId: null,
   currentOfficeId: null,
   currentAsOf: null,
   seats: [],
-  fuse: null,
+  // Fuse indexes keyed by scope. "floor" rebuilds on every loadFloor;
+  // "office" / "all" are built lazily and invalidated on as_of change
+  // or office switch (for "office" only).
+  fuses: { floor: null, office: null, all: null },
+  fuseOfficeKey: null,
 };
 
 function urlState() {
@@ -88,6 +97,28 @@ function checkResponse(r, label) {
 async function fetchOffices() {
   const r = await fetch("/api/offices");
   return (await checkResponse(r, "/api/offices")).json();
+}
+
+const OFFICE_ID_RE = /^[A-Za-z0-9._-]+$/;
+
+async function fetchSeats(officeId, asOf) {
+  const params = new URLSearchParams();
+  if (officeId) {
+    if (!OFFICE_ID_RE.test(officeId)) {
+      throw new Error(`invalid office id: ${officeId}`);
+    }
+    params.set("office", officeId);
+  }
+  if (asOf) {
+    if (!ISO_DATE_RE.test(asOf)) {
+      throw new Error(`invalid asOf: ${asOf}`);
+    }
+    params.set("asOf", asOf);
+  }
+  const qs = params.toString();
+  const url = `/api/seats${qs ? "?" + qs : ""}`;
+  const r = await fetch(url);
+  return (await checkResponse(r, "/api/seats")).json();
 }
 
 async function fetchFloor(floorId, asOf) {
@@ -176,9 +207,9 @@ function el(tag, attrs, ...children) {
 }
 
 function renderResults(matches) {
-  els.results.replaceChildren();
+  els.resultsList.replaceChildren();
   if (!matches.length) {
-    els.results.appendChild(el("p", { className: "empty" }, "No matches."));
+    els.resultsList.appendChild(el("p", { className: "empty" }, "No matches."));
     return;
   }
   for (const m of matches) {
@@ -196,15 +227,35 @@ function renderResults(matches) {
       el("div", { className: "seat-id" }, s.seat_id),
       el("div", { className: "meta" }, `${who} — ${s.floor}`),
     );
-    row.addEventListener("click", () => selectSeat(s.seat_id));
+    row.addEventListener("click", () => selectResult(s));
     row.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        selectSeat(s.seat_id);
+        selectResult(s);
       }
     });
-    els.results.appendChild(row);
+    els.resultsList.appendChild(row);
   }
+}
+
+async function selectResult(seat) {
+  // A search result may live on a different floor (office or all-offices
+  // scope) — navigate there first, then highlight the seat.
+  if (seat.floor && seat.floor !== state.currentFloorId) {
+    const officeId = state.floorToOffice.get(seat.floor);
+    if (!officeId) {
+      showError(new Error(`unknown office for floor ${seat.floor}`));
+      return;
+    }
+    try {
+      await loadFloor(officeId, seat.floor, state.currentAsOf);
+      setFloorPickerValue(officeId, seat.floor);
+    } catch (err) {
+      showError(err);
+      return;
+    }
+  }
+  selectSeat(seat.seat_id);
 }
 
 function applySeatClasses() {
@@ -287,13 +338,55 @@ function debounce(fn, ms) {
   };
 }
 
-const onSearch = debounce(() => {
+async function ensureFuseFor(scope) {
+  if (!globalThis.Fuse) return null;
+  if (scope === "floor") {
+    return state.fuses.floor;
+  }
+  if (scope === "office") {
+    const officeId = state.currentOfficeId;
+    if (!officeId) return null;
+    if (state.fuses.office && state.fuseOfficeKey === officeId) {
+      return state.fuses.office;
+    }
+    const data = await fetchSeats(officeId, state.currentAsOf);
+    state.fuses.office = new globalThis.Fuse(
+      data.seats.map(searchableSeat),
+      FUSE_OPTIONS,
+    );
+    state.fuseOfficeKey = officeId;
+    return state.fuses.office;
+  }
+  if (scope === "all") {
+    if (state.fuses.all) return state.fuses.all;
+    const data = await fetchSeats("", state.currentAsOf);
+    state.fuses.all = new globalThis.Fuse(
+      data.seats.map(searchableSeat),
+      FUSE_OPTIONS,
+    );
+    return state.fuses.all;
+  }
+  return null;
+}
+
+function searchScope() {
+  return els.searchScope ? els.searchScope.value : "floor";
+}
+
+const onSearch = debounce(async () => {
   const q = els.search.value.trim();
   if (!q) {
-    els.results.replaceChildren(el("p", { className: "empty" }, "Type to search…"));
+    els.resultsList.replaceChildren(el("p", { className: "empty" }, "Type to search…"));
     return;
   }
-  const matches = state.fuse ? state.fuse.search(q).slice(0, 50) : [];
+  let fuse;
+  try {
+    fuse = await ensureFuseFor(searchScope());
+  } catch (err) {
+    showError(err);
+    return;
+  }
+  const matches = fuse ? fuse.search(q).slice(0, 50) : [];
   renderResults(matches);
 }, 150);
 
@@ -342,14 +435,25 @@ async function loadFloor(officeId, floorId, asOf) {
     throw new Error(`unknown floor: ${floorId}`);
   }
   const data = await fetchFloor(floorId, asOf);
+  const officeChanged = state.currentOfficeId !== officeId;
+  const asOfChanged = state.currentAsOf !== (asOf || null);
   state.currentOfficeId = officeId;
   state.currentFloorId = floorId;
   state.currentAsOf = asOf || null;
   state.seats = data.seats;
   renderUserInfo(data.user || null);
-  state.fuse = globalThis.Fuse
+  state.fuses.floor = globalThis.Fuse
     ? new globalThis.Fuse(state.seats.map(searchableSeat), FUSE_OPTIONS)
     : null;
+  if (officeChanged) {
+    state.fuses.office = null;
+    state.fuseOfficeKey = null;
+  }
+  if (asOfChanged) {
+    state.fuses.office = null;
+    state.fuses.all = null;
+    state.fuseOfficeKey = null;
+  }
 
   const svgName = svgNameFromUrl(data.svg_url);
   if (!svgName) {
@@ -369,22 +473,32 @@ async function loadFloor(officeId, floorId, asOf) {
 async function loadOffices() {
   const data = await fetchOffices();
   state.offices = data.offices;
+  state.officesById = new Map(state.offices.map((o) => [o.id, o]));
   state.knownFloorIds = new Set();
-  els.floorPicker.replaceChildren();
+  state.floorToOffice = new Map();
   for (const office of state.offices) {
     for (const floor of office.floors) {
       state.knownFloorIds.add(floor.id);
-      els.floorPicker.appendChild(
-        el(
-          "option",
-          { value: `${office.id}|${floor.id}` },
-          `${office.name} / ${floor.id}`,
-        ),
-      );
+      state.floorToOffice.set(floor.id, office.id);
     }
   }
+  populateOfficePicker();
+  els.officePicker.addEventListener("change", async () => {
+    const officeId = els.officePicker.value;
+    populateFloorPicker(officeId);
+    const office = state.officesById.get(officeId);
+    if (!office || !office.floors.length) return;
+    const floorId = office.floors[0].id;
+    try {
+      await loadFloor(officeId, floorId, urlState().asOf);
+      pushUrl(officeId, floorId, null);
+    } catch (err) {
+      showError(err);
+    }
+  });
   els.floorPicker.addEventListener("change", async () => {
-    const [officeId, floorId] = els.floorPicker.value.split("|");
+    const officeId = els.officePicker.value;
+    const floorId = els.floorPicker.value;
     try {
       await loadFloor(officeId, floorId, urlState().asOf);
       pushUrl(officeId, floorId, null);
@@ -394,8 +508,35 @@ async function loadOffices() {
   });
 }
 
+function populateOfficePicker() {
+  els.officePicker.replaceChildren();
+  for (const office of state.offices) {
+    if (!office.floors.length) continue;
+    els.officePicker.appendChild(
+      el("option", { value: office.id }, office.name),
+    );
+  }
+  // Seed the floor picker with the first office's floors so it isn't
+  // blank before syncFromUrl runs.
+  if (els.officePicker.value) {
+    populateFloorPicker(els.officePicker.value);
+  }
+}
+
+function populateFloorPicker(officeId) {
+  els.floorPicker.replaceChildren();
+  const office = state.officesById.get(officeId);
+  if (!office) return;
+  for (const floor of office.floors) {
+    const label = floor.status === "draft" ? `${floor.id} (draft)` : floor.id;
+    els.floorPicker.appendChild(el("option", { value: floor.id }, label));
+  }
+}
+
 function setFloorPickerValue(officeId, floorId) {
-  els.floorPicker.value = `${officeId}|${floorId}`;
+  els.officePicker.value = officeId;
+  populateFloorPicker(officeId);
+  els.floorPicker.value = floorId;
 }
 
 function renderUserInfo(user) {
@@ -465,8 +606,11 @@ globalThis.addEventListener("popstate", () => {
   syncFromUrl().catch(showError);
 });
 els.search.addEventListener("input", onSearch);
+if (els.searchScope) {
+  els.searchScope.addEventListener("change", onSearch);
+}
 
-els.results.replaceChildren(el("p", { className: "empty" }, "Type to search…"));
+els.resultsList.replaceChildren(el("p", { className: "empty" }, "Type to search…"));
 
 try {
   await loadOffices();
