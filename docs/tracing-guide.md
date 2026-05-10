@@ -59,8 +59,10 @@ Every shape the agent cares about has both an `id` and a `class`.
 
 Hard rules:
 
-- Cluster letter **uppercase**. Sequence **zero-padded to 2 digits**.
-  `5-T-01`, never `5-T-1`.
+- Cluster letter **uppercase**. Sequence **zero-padded to at least 2
+  digits** (`5-T-01`, never `5-T-1`). Clusters with more than 99 seats
+  use 3 digits without an extra leading zero (`5-T-100`,
+  never `5-T-099`).
 - Floor number first; the agent splits on the last `-` to recover it.
 - Room ids match the validator's regex `^\d+\.\d+$` — strictly
   `<digits>.<digits>`. If the architect's plan writes a room as
@@ -212,7 +214,8 @@ What it checks:
 - Every `<rect>` / `<polygon>` with a seat-style id is tagged
   `class="seat"`; every room id is tagged `class="room"`. Untagged
   shapes (id present but `class` missing or wrong) are reported.
-- Seat ids match `^\d+-[A-Z]-\d{2}$`; room ids match `^\d+\.\d+$`.
+- Seat ids match `^\d+-[A-Z]-(\d{2}|[1-9]\d{2})$`; room ids match
+  `^\d+\.\d+$`.
 - No duplicate ids.
 - Cluster capacity in `offices.yaml` matches the seat count in the
   SVG (warning, not an error — useful while you're mid-trace).

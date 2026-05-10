@@ -90,7 +90,7 @@ def _check_seat(sid: str, floor: Floor) -> list[Issue]:
             Issue(
                 Severity.ERROR,
                 "seat-id-format",
-                f"seat id {sid!r} does not match <floor>-<CLUSTER>-<NN>",
+                f"seat id {sid!r} does not match <floor>-<CLUSTER>-<NN|NNN>",
             )
         ]
     parsed = parse_seat_id(sid)

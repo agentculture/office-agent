@@ -124,7 +124,8 @@ A traced floor SVG must:
 
 - have `viewBox="0 0 1920 1080"`;
 - give every `<rect class="seat">` a `<floor>-<CLUSTER>-<NN>` id whose
-  floor segment matches the floor entry's id;
+  floor segment matches the floor entry's id (or `<NNN>` for clusters
+  with more than 99 seats — `5-T-100`, never `5-T-099`);
 - give every `<polygon class="room">` an architect id like `5.18`;
 - have unique ids within the file.
 

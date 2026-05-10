@@ -152,7 +152,7 @@ Floor SVGs in `floors/` are the integration boundary between Ori's Inkscape work
 | Phone/zoom room as a seat       | open-space pattern              | `5-Z-04`         |
 | Cluster boundary (optional)     | `cluster-<floor>-<letter>`      | `cluster-5-T`    |
 
-Rules: IDs unique within a file; floor number first; cluster letter uppercase; sequence zero-padded to 2 digits; `class="seat"` on desk rects, `class="room"` on room polygons; **no person data** in the SVG (assignments live in the datastore). Save as **Plain SVG**, `viewBox="0 0 1920 1080"`, background image embedded.
+Rules: IDs unique within a file; floor number first; cluster letter uppercase; sequence zero-padded to at least 2 digits (3 digits for clusters with more than 99 seats — `5-T-100`, never `5-T-099`); `class="seat"` on desk rects, `class="room"` on room polygons; **no person data** in the SVG (assignments live in the datastore). Save as **Plain SVG**, `viewBox="0 0 1920 1080"`, background image embedded.
 
 `data/offices.yaml` declares cluster capacity per floor; the build should warn if the count of seat IDs in the SVG doesn't match.
 

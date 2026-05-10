@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-05-10
+
+### Added
+
+- 3-digit seat-id support — `SEAT_RE` now accepts `\d{2}|[1-9]\d{2}`,
+  so clusters with more than 99 seats (e.g. `5-T-100` … `5-T-146`) pass
+  validation. Still rejects 1-digit (`5-T-1`) and overpadded 3-digit
+  (`5-T-001`).
+- `data/offices.demo.yaml` and `floors/demo-floor-1.svg` — the
+  committed example shipped with the repo. Bootstrap a local setup
+  with `cp data/offices.demo.yaml data/offices.yaml`.
+
+### Changed
+
+- `data/offices.yaml` and `floors/*.svg` are now gitignored (except
+  `floors/demo-*.svg`). Real office topology + floor SVGs live only on
+  Google Drive — the runtime CMS. See `docs/floors-from-drive.md`.
+- `CLAUDE.md` and `docs/tracing-guide.md` updated to reflect the
+  widened seat-id format.
+
+### Fixed
+
 ## [0.15.0] - 2026-05-09
 
 ### Added

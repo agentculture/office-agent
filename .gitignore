@@ -224,6 +224,13 @@ __marimo__/
 seats/assignments.csv
 seats/audit-log.csv
 
+# Real office topology + floor SVGs live on Google Drive (see
+# `docs/floors-from-drive.md`). The committed `data/offices.demo.yaml`
+# and `floors/demo-*.svg` are the only checked-in examples.
+data/offices.yaml
+floors/*.svg
+!floors/demo-*.svg
+
 # Inkscape Save-As leftover (e.g. tlv-floor-5-1.svg, tlv-floor-5-2.svg).
 # Issue #54.
 floors/*-[0-9]*-[0-9]*.svg

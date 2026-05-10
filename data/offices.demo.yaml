@@ -1,0 +1,22 @@
+# Demo office topology — the committed example shipped with the repo.
+#
+# Real office data lives only on Google Drive (see
+# `docs/floors-from-drive.md`). To get started locally:
+#
+#   cp data/offices.demo.yaml data/offices.yaml
+#
+# `data/offices.yaml` is git-ignored so operator-specific topology
+# never lands in the repo.
+
+offices:
+  - id: demo
+    name: "Demo Office"
+    address: "Demo City"
+    floors:
+      - id: demo-floor-1
+        svg: floors/demo-floor-1.svg
+        status: active
+        clusters:
+          A: { capacity: 8, type: open-space }
+        rooms:
+          "1.01": { name: "Demo Room", type: meeting, capacity: 4 }

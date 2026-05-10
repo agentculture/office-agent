@@ -18,7 +18,10 @@ def load_offices(data_dir: Path) -> dict[str, Office]:
         raise OfficeError(
             code=EXIT_ENV_ERROR,
             message=f"offices.yaml not found at {yaml_path}",
-            remediation="create data/offices.yaml or set OFFICE_DATA_DIR / pass --data-dir",
+            remediation=(
+                "bootstrap from the demo: cp data/offices.demo.yaml "
+                "data/offices.yaml — or set OFFICE_DATA_DIR / pass --data-dir"
+            ),
         )
     with yaml_path.open("r", encoding="utf-8") as f:
         try:
@@ -35,7 +38,7 @@ def load_offices(data_dir: Path) -> dict[str, Office]:
         raise OfficeError(
             code=EXIT_USER_ERROR,
             message="offices.yaml must contain a top-level `offices:` list",
-            remediation="see data/offices.yaml in the office-agent repo for the expected shape",
+            remediation="see data/offices.demo.yaml for the expected shape",
         )
 
     offices: dict[str, Office] = {}
