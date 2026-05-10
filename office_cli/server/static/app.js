@@ -487,7 +487,7 @@ async function loadOffices() {
     const officeId = els.officePicker.value;
     populateFloorPicker(officeId);
     const office = state.officesById.get(officeId);
-    if (!office || !office.floors.length) return;
+    if (!office?.floors.length) return;
     const floorId = office.floors[0].id;
     try {
       await loadFloor(officeId, floorId, urlState().asOf);
