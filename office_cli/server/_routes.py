@@ -63,6 +63,16 @@ def register_routes(
         user = current_user(request, oidc=oidc)
         return _build_floor_response(service, floor_id, as_of or as_of_camel, HTTPException, user)
 
+    @app.get("/api/seats")
+    def get_seats(
+        request: Request,
+        office: str = "",
+        as_of: str = "",
+        as_of_camel: str = Query("", alias="asOf"),
+    ) -> dict:
+        user = current_user(request, oidc=oidc)
+        return _build_seats_response(service, office, as_of or as_of_camel, HTTPException, user)
+
     @app.get("/", response_class=RedirectResponse)
     def root() -> str:
         first = _first_floor_path(service)
@@ -183,6 +193,49 @@ def _build_floor_response(
         "seats": seats,
         # Echo the date back only when the caller asked for one — this is
         # what the frontend uses to decide whether to surface the banner.
+        "as_of": as_of_value if explicit else None,
+        "user": user,
+    }
+
+
+def _build_seats_response(
+    service: SeatService,
+    office_id: str,
+    raw_as_of: str,
+    http_exception: Any,
+    user: dict[str, str] | None,
+) -> dict[str, Any]:
+    """Pure builder for the ``/api/seats`` JSON body.
+
+    Returns every seat across the topology (or just the requested
+    office) so the seat-map SPA can run cross-floor / cross-office
+    fuzzy search without round-tripping per floor. ``as_of`` is honored
+    so date-aware redaction stays consistent with ``/api/floors/{id}``.
+    """
+    if raw_as_of:
+        as_of_value: str | None = parse_iso_date(
+            raw_as_of, field="as_of", example="?as_of=2026-07-01"
+        )
+        explicit = True
+    else:
+        as_of_value = today_iso_date(service._clock)
+        explicit = False
+    if office_id and office_id not in service.offices:
+        raise http_exception(
+            status_code=404,
+            detail={
+                "error": f"unknown office: {office_id}",
+                "remediation": "GET /api/offices to see available office ids",
+            },
+        )
+    role = role_from_user(user)
+    seats = service.list_seats(as_of=as_of_value, role=role)
+    if office_id:
+        floor_ids = {f.id for f in service.offices[office_id].floors.values()}
+        seats = [s for s in seats if s.floor in floor_ids]
+    return {
+        "office": office_id or None,
+        "seats": [_redact(a) for a in seats],
         "as_of": as_of_value if explicit else None,
         "user": user,
     }

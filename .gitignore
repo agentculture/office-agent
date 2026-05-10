@@ -238,6 +238,7 @@ floors/*-[0-9]*-[0-9]*.svg
 # Operator-local scaffold manifest. The committed `.example` is the
 # template; the real one points at the operator's local PDF.
 data/floor-bootstrap.yaml
+data/floor-bootstrap-*.yaml
 
 # Google Sheets service-account key — never commit credentials.
 data/sheets-service-account.json

@@ -46,6 +46,36 @@ def test_get_offices(data_dir: Path) -> None:
         assert body["offices"][0]["floors"] == [{"id": "tlv-floor-5", "status": "active"}]
 
 
+def test_get_seats_returns_all(data_dir: Path) -> None:
+    s = _service(data_dir)
+    s.assign("5-T-01", "alice@example.com")
+    with TestClient(build_app(s, data_dir=data_dir)) as c:
+        r = c.get("/api/seats")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["office"] is None
+        seats = {seat["seat_id"]: seat for seat in body["seats"]}
+        # Every declared seat in the fixture surfaces, occupied or not.
+        assert "5-T-01" in seats
+        assert seats["5-T-01"]["employee_email"] == "alice@example.com"
+        assert seats["5-T-01"]["floor"] == "tlv-floor-5"
+
+
+def test_get_seats_filters_by_office(data_dir: Path) -> None:
+    with _client(data_dir) as c:
+        r = c.get("/api/seats?office=tlv")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["office"] == "tlv"
+        assert {seat["floor"] for seat in body["seats"]} == {"tlv-floor-5"}
+
+
+def test_get_seats_unknown_office_404(data_dir: Path) -> None:
+    with _client(data_dir) as c:
+        r = c.get("/api/seats?office=nope")
+        assert r.status_code == 404
+
+
 def test_get_floor_returns_merged_view(data_dir: Path) -> None:
     s = _service(data_dir)
     s.assign("5-T-01", "alice@example.com")

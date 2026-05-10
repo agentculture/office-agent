@@ -12,12 +12,23 @@
   <header class="topbar">
     <div class="brand">office</div>
     <input id="search" type="search" placeholder="Search seats, people, rooms…" autocomplete="off">
+    <select id="office-picker" aria-label="Switch office"></select>
     <select id="floor-picker" aria-label="Switch floor"></select>
     <div id="user-info" class="user-info" hidden></div>
   </header>
   <div id="banner" class="banner" hidden></div>
   <div class="layout">
-    <aside id="results" class="results" aria-label="Search results"></aside>
+    <aside id="results" class="results" aria-label="Search results">
+      <div class="results-header">
+        <label for="search-scope">Search:</label>
+        <select id="search-scope" aria-label="Search scope">
+          <option value="floor">This floor</option>
+          <option value="office">This office</option>
+          <option value="all">All offices</option>
+        </select>
+      </div>
+      <div id="results-list" class="results-list"></div>
+    </aside>
     <main id="map" class="map" aria-label="Floor map"></main>
     <section id="detail" class="detail" aria-label="Selected seat detail" hidden></section>
   </div>

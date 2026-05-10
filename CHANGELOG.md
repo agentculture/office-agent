@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-05-10
+
+### Added
+
+- Cascading office + floor pickers in the seat-map web UI. The flat "Office / floor" dropdown is replaced with a separate office picker that narrows the floor picker to that office's floors. Floors render with a `(draft)` suffix when `status: draft`.
+- Search-scope selector under the search bar (in the results panel) — toggles between `This floor`, `This office`, and `All offices`. Office and all-offices Fuse indexes are built lazily and invalidated on office switch / `asOf` change.
+- `GET /api/seats[?office=][&asOf=]` endpoint backing the new scope picker. Reuses `SeatService.list_seats` and the existing `_redact` helper so role-aware redaction stays consistent with `/api/floors/{id}`.
+- Tests for `GET /api/seats` (all offices, single-office filter, 404 for unknown office).
+
+### Changed
+
+- `.gitignore`: extend the operator-local manifest pattern to ignore per-office `data/floor-bootstrap-<office>.yaml` manifests.
+
 ## [0.16.0] - 2026-05-10
 
 ### Added
