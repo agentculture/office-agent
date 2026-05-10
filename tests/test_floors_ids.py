@@ -14,6 +14,13 @@ def test_seat_id_happy(sid: str) -> None:
     assert str(parsed) == sid
 
 
+@pytest.mark.parametrize("sid", ["5-T-100", "5-T-146", "12-K-999"])
+def test_seat_id_three_digit(sid: str) -> None:
+    assert is_seat_id(sid)
+    parsed = parse_seat_id(sid)
+    assert str(parsed) == sid
+
+
 @pytest.mark.parametrize(
     "sid",
     [

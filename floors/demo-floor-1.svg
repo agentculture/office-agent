@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080">
+  <g id="seats">
+    <rect id="1-A-01" class="seat" x="120" y="80"  width="40" height="60"/>
+    <rect id="1-A-02" class="seat" x="180" y="80"  width="40" height="60"/>
+    <rect id="1-A-03" class="seat" x="240" y="80"  width="40" height="60"/>
+    <rect id="1-A-04" class="seat" x="300" y="80"  width="40" height="60"/>
+    <rect id="1-A-05" class="seat" x="120" y="160" width="40" height="60"/>
+    <rect id="1-A-06" class="seat" x="180" y="160" width="40" height="60"/>
+    <rect id="1-A-07" class="seat" x="240" y="160" width="40" height="60"/>
+    <rect id="1-A-08" class="seat" x="300" y="160" width="40" height="60"/>
+  </g>
+  <g id="rooms">
+    <polygon id="1.01" class="room"
+             points="1400,300 1700,300 1700,500 1400,500"/>
+  </g>
+</svg>

@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-SEAT_RE = re.compile(r"^(?P<floor>\d+)-(?P<cluster>[A-Z])-(?P<num>\d{2})$")
+SEAT_RE = re.compile(r"^(?P<floor>\d+)-(?P<cluster>[A-Z])-(?P<num>\d{2}|[1-9]\d{2})$")
 ROOM_RE = re.compile(r"^\d+\.\d+$")
 CLUSTER_BOUNDARY_RE = re.compile(r"^cluster-\d+-[A-Z]$")
 
