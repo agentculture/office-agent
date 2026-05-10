@@ -39,8 +39,7 @@ def load_offices(data_dir: Path) -> dict[str, Office]:
             code=EXIT_USER_ERROR,
             message="offices.yaml must contain a top-level `offices:` list",
             remediation=(
-                "see data/offices.demo.yaml in the office-agent repo "
-                "for the expected shape"
+                "see data/offices.demo.yaml in the office-agent repo " "for the expected shape"
             ),
         )
 
