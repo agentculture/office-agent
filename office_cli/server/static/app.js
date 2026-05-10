@@ -339,42 +339,47 @@ function debounce(fn, ms) {
   };
 }
 
-async function ensureFuseFor(scope) {
-  // Capture (officeId, asOf) at entry so the post-await write only lands
-  // when the SPA's view of the world hasn't moved on. Otherwise a slow
-  // /api/seats fetch could repopulate a cache that loadFloor() invalidated
-  // mid-flight, producing stale search results for the new context.
-  if (!globalThis.Fuse) return null;
-  if (scope === "floor") {
-    return state.fuses.floor;
+function buildFuse(seats) {
+  return new globalThis.Fuse(seats.map(searchableSeat), FUSE_OPTIONS);
+}
+
+async function ensureOfficeFuse(officeAtStart, asOfAtStart) {
+  if (!officeAtStart) return null;
+  if (state.fuses.office && state.fuseOfficeKey === officeAtStart) {
+    return state.fuses.office;
   }
+  const data = await fetchSeats(officeAtStart, asOfAtStart);
+  const fuse = buildFuse(data.seats);
+  // Only cache if the SPA's view of the world hasn't moved on during the
+  // await — otherwise a slow fetch could repopulate a cache that
+  // loadFloor() invalidated for a new context.
+  if (
+    state.currentOfficeId === officeAtStart
+    && state.currentAsOf === asOfAtStart
+  ) {
+    state.fuses.office = fuse;
+    state.fuseOfficeKey = officeAtStart;
+  }
+  return fuse;
+}
+
+async function ensureAllFuse(asOfAtStart) {
+  if (state.fuses.all) return state.fuses.all;
+  const data = await fetchSeats("", asOfAtStart);
+  const fuse = buildFuse(data.seats);
+  if (state.currentAsOf === asOfAtStart) {
+    state.fuses.all = fuse;
+  }
+  return fuse;
+}
+
+async function ensureFuseFor(scope) {
+  if (!globalThis.Fuse) return null;
+  if (scope === "floor") return state.fuses.floor;
   const officeAtStart = state.currentOfficeId;
   const asOfAtStart = state.currentAsOf;
-  if (scope === "office") {
-    if (!officeAtStart) return null;
-    if (state.fuses.office && state.fuseOfficeKey === officeAtStart) {
-      return state.fuses.office;
-    }
-    const data = await fetchSeats(officeAtStart, asOfAtStart);
-    const fuse = new globalThis.Fuse(data.seats.map(searchableSeat), FUSE_OPTIONS);
-    if (
-      state.currentOfficeId === officeAtStart
-      && state.currentAsOf === asOfAtStart
-    ) {
-      state.fuses.office = fuse;
-      state.fuseOfficeKey = officeAtStart;
-    }
-    return fuse;
-  }
-  if (scope === "all") {
-    if (state.fuses.all) return state.fuses.all;
-    const data = await fetchSeats("", asOfAtStart);
-    const fuse = new globalThis.Fuse(data.seats.map(searchableSeat), FUSE_OPTIONS);
-    if (state.currentAsOf === asOfAtStart) {
-      state.fuses.all = fuse;
-    }
-    return fuse;
-  }
+  if (scope === "office") return ensureOfficeFuse(officeAtStart, asOfAtStart);
+  if (scope === "all") return ensureAllFuse(asOfAtStart);
   return null;
 }
 
