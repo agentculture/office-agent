@@ -49,6 +49,7 @@ const state = {
   // or office switch (for "office" only).
   fuses: { floor: null, office: null, all: null },
   fuseOfficeKey: null,
+  searchGen: 0,
 };
 
 function urlState() {
@@ -214,7 +215,7 @@ function renderResults(matches) {
   }
   for (const m of matches) {
     const s = m.item.raw;
-    const who = s.hidden && s.employee_email
+    const who = s.redacted
       ? "(private)"
       : s.employee_email || "(vacant)";
     const row = el(
@@ -268,7 +269,7 @@ function applySeatClasses() {
     const sid = node.id;
     const s = bySeatId.get(sid);
     if (!s) continue;
-    if (s.hidden && s.employee_email) {
+    if (s.redacted) {
       node.classList.add("private");
     } else if (s.employee_email) {
       node.classList.add("occupied");
@@ -299,7 +300,7 @@ function renderDetail(seatId) {
     els.detail.hidden = true;
     return;
   }
-  const who = s.hidden && s.employee_email
+  const who = s.redacted
     ? "(private)"
     : s.employee_email || "(vacant)";
   const dl = el(
@@ -339,32 +340,40 @@ function debounce(fn, ms) {
 }
 
 async function ensureFuseFor(scope) {
+  // Capture (officeId, asOf) at entry so the post-await write only lands
+  // when the SPA's view of the world hasn't moved on. Otherwise a slow
+  // /api/seats fetch could repopulate a cache that loadFloor() invalidated
+  // mid-flight, producing stale search results for the new context.
   if (!globalThis.Fuse) return null;
   if (scope === "floor") {
     return state.fuses.floor;
   }
+  const officeAtStart = state.currentOfficeId;
+  const asOfAtStart = state.currentAsOf;
   if (scope === "office") {
-    const officeId = state.currentOfficeId;
-    if (!officeId) return null;
-    if (state.fuses.office && state.fuseOfficeKey === officeId) {
+    if (!officeAtStart) return null;
+    if (state.fuses.office && state.fuseOfficeKey === officeAtStart) {
       return state.fuses.office;
     }
-    const data = await fetchSeats(officeId, state.currentAsOf);
-    state.fuses.office = new globalThis.Fuse(
-      data.seats.map(searchableSeat),
-      FUSE_OPTIONS,
-    );
-    state.fuseOfficeKey = officeId;
-    return state.fuses.office;
+    const data = await fetchSeats(officeAtStart, asOfAtStart);
+    const fuse = new globalThis.Fuse(data.seats.map(searchableSeat), FUSE_OPTIONS);
+    if (
+      state.currentOfficeId === officeAtStart
+      && state.currentAsOf === asOfAtStart
+    ) {
+      state.fuses.office = fuse;
+      state.fuseOfficeKey = officeAtStart;
+    }
+    return fuse;
   }
   if (scope === "all") {
     if (state.fuses.all) return state.fuses.all;
-    const data = await fetchSeats("", state.currentAsOf);
-    state.fuses.all = new globalThis.Fuse(
-      data.seats.map(searchableSeat),
-      FUSE_OPTIONS,
-    );
-    return state.fuses.all;
+    const data = await fetchSeats("", asOfAtStart);
+    const fuse = new globalThis.Fuse(data.seats.map(searchableSeat), FUSE_OPTIONS);
+    if (state.currentAsOf === asOfAtStart) {
+      state.fuses.all = fuse;
+    }
+    return fuse;
   }
   return null;
 }
@@ -379,11 +388,29 @@ const onSearch = debounce(async () => {
     els.resultsList.replaceChildren(el("p", { className: "empty" }, "Type to search…"));
     return;
   }
+  // Monotonic generation counter — debounce only cancels the timer, not
+  // already-running async work. After awaits we discard if a newer
+  // onSearch invocation has started, so old results never repaint over
+  // newer ones.
+  state.searchGen = (state.searchGen || 0) + 1;
+  const gen = state.searchGen;
+  const scopeAtStart = searchScope();
+  const officeAtStart = state.currentOfficeId;
+  const asOfAtStart = state.currentAsOf;
   let fuse;
   try {
-    fuse = await ensureFuseFor(searchScope());
+    fuse = await ensureFuseFor(scopeAtStart);
   } catch (err) {
+    if (gen !== state.searchGen) return;
     showError(err);
+    return;
+  }
+  if (gen !== state.searchGen) return;
+  if (
+    searchScope() !== scopeAtStart
+    || state.currentOfficeId !== officeAtStart
+    || state.currentAsOf !== asOfAtStart
+  ) {
     return;
   }
   const matches = fuse ? fuse.search(q).slice(0, 50) : [];
